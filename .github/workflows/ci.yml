@@ -62,8 +62,9 @@ jobs:
         continue-on-error: ${{ runner.os == 'Windows' }}
         run: bun run typecheck
 
-      - name: diagnose untouched macOS deadline tests with only a fixture-root mapping
+      - name: diagnose untouched macOS foundation file context
         if: runner.os == 'macOS'
+        continue-on-error: true
         shell: bash
         run: |
           git diff --exit-code 2eb440ad4593bb2d3c5382911de023a006eb2dd6 -- apps packages scripts
@@ -85,11 +86,91 @@ jobs:
               console.log("Diagnostic: filesystem prefix remapped; nightly test and runtime sources unchanged");
             `);
           '
-          bun test --preload "$RUNNER_TEMP/foundation-root-preload.ts" apps/server/src/routines/foundations.test.ts -t "deadline kills shell grandchild|run-duration budget"
+          bun test --preload "$RUNNER_TEMP/foundation-root-preload.ts" apps/server/src/routines/foundations.test.ts
 
-      - name: diagnose untouched Windows test suite
+      - name: classify untouched macOS MCP cases in clean and pre-load-poisoned processes
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=2eb440ad4593bb2d3c5382911de023a006eb2dd6
+          git diff --exit-code "$base" -- apps packages scripts neopi.pin bun.lock package.json
+          pin="$(tr -d '[:space:]' < neopi.pin)"
+          test "$(git -C "$NPI_DECK_NEOPI_SOURCE" rev-parse HEAD)" = "$pin"
+          export NPI_DECK_BACKEND="$NPI_DECK_NEOPI_SOURCE"
+          export NPI_MCP_DIAG_REPO="$GITHUB_WORKSPACE"
+          export NPI_MCP_DIAG_ROOT="$(bun --eval 'import { mkdtempSync } from "node:fs"; import { tmpdir } from "node:os"; import * as path from "node:path"; console.log(mkdtempSync(path.join(tmpdir(), "mcp-classification-")));')"
+          bun --eval '
+            await Bun.write(process.env.NPI_MCP_DIAG_ROOT + "/poison-preload.ts", String.raw`
+              import { beforeAll } from "bun:test";
+              import { pathToFileURL } from "node:url";
+              const root = process.env.NPI_MCP_DIAG_REPO;
+              const runtime = await import(pathToFileURL(root + "/apps/server/src/backend/runtime.ts").href);
+              const auth = await import(pathToFileURL(root + "/apps/server/src/auth-singleton.ts").href);
+              if (runtime.activeBackend()) throw new Error("diagnostic requires no backend before poison");
+              const before = auth.getDeckModelRegistry();
+              let prior;
+              try { await before; throw new Error("pre-load registry unexpectedly succeeded"); }
+              catch (error) {
+                if (!(error instanceof runtime.BackendConfigError)) throw error;
+                prior = error;
+                console.log("DIAG pre-load", error.name, error.message);
+              }
+              beforeAll(async () => {
+                const backend = runtime.activeBackend();
+                if (!backend) throw new Error("MCP fixture did not successfully load backend");
+                console.log("DIAG loaded", backend.identity.commit, "agent", runtime.sdk().getAgentDir());
+                const after = auth.getDeckModelRegistry();
+                console.log("DIAG same registry promise", after === before);
+                try { await after; console.log("DIAG registry recovered"); }
+                catch (error) {
+                  console.log("DIAG same rejected error", error === prior, error.name, error.message);
+                }
+              });
+            `);
+          '
+          result=0
+          for mode in clean poison; do
+            private="$NPI_MCP_DIAG_ROOT/$mode"
+            mkdir -p "$private/home" "$private/deck" "$private/agent" "$private/config" "$private/cache" "$private/data"
+            export HOME="$private/home" NPI_DECK_HOME="$private/deck"
+            export PI_CODING_AGENT_DIR="$private/agent"
+            export XDG_CONFIG_HOME="$private/config" XDG_CACHE_HOME="$private/cache" XDG_DATA_HOME="$private/data"
+            echo "DIAG mode=$mode nightly=$base backend=$pin"
+            args=()
+            if [ "$mode" = poison ]; then args=(--preload "$NPI_MCP_DIAG_ROOT/poison-preload.ts"); fi
+            set +e
+            bun test "${args[@]}" ./apps/server/src/routines/steps/mcp.test.ts 2>&1 | tee "$NPI_MCP_DIAG_ROOT/$mode.log"
+            rc=${PIPESTATUS[0]}
+            set -e
+            echo "DIAG mode=$mode bun_exit=$rc"
+            printf '%s\n' "$rc" > "$NPI_MCP_DIAG_ROOT/$mode.exit"
+            if [ "$rc" -ne 0 ]; then result=1; fi
+          done
+          echo "NPI_MCP_DIAG_ROOT=$NPI_MCP_DIAG_ROOT" >> "$GITHUB_ENV"
+          exit "$result"
+
+      - name: retain macOS MCP classification evidence
+        if: always() && runner.os == 'macOS' && env.NPI_MCP_DIAG_ROOT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-mcp-classification
+          path: |
+            ${{ env.NPI_MCP_DIAG_ROOT }}/*.log
+            ${{ env.NPI_MCP_DIAG_ROOT }}/*.exit
+            ${{ env.NPI_MCP_DIAG_ROOT }}/poison-preload.ts
+
+      - name: diagnose exact untouched Windows cron teardown
         if: runner.os == 'Windows'
         shell: bash
         run: |
           git diff --exit-code 2eb440ad4593bb2d3c5382911de023a006eb2dd6 -- apps packages scripts
-          bun test
+          set +e
+          bun test apps/server/src/routines/foundations.test.ts -t '^disabling a cron routine clears next run, and a manual run while disabled does not restore it$'
+          focused_status=$?
+          if [ "$focused_status" -eq 0 ]; then
+            echo "Exact cron test passed in isolation; preserving whole-file context next."
+            bun test apps/server/src/routines/foundations.test.ts
+          else
+            exit "$focused_status"
+          fi
