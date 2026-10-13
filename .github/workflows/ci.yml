@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest]
         bun: ["1.3.14"]
     steps:
       - uses: actions/checkout@v4
@@ -57,36 +57,7 @@ jobs:
         run: bun scripts/neopi-setup.ts --build-native
 
       - name: typecheck (all workspaces)
-        # Disposable diagnostic ref only: #145 prevents untouched Windows tests
-        # from running. Preserve its failure, then observe the baseline tests.
-        continue-on-error: ${{ runner.os == 'Windows' }}
         run: bun run typecheck
-
-      - name: diagnose untouched macOS foundation file context
-        if: runner.os == 'macOS'
-        continue-on-error: true
-        shell: bash
-        run: |
-          git diff --exit-code 2eb440ad4593bb2d3c5382911de023a006eb2dd6 -- apps packages scripts
-          bun --eval '
-            await Bun.write(process.env.RUNNER_TEMP + "/foundation-root-preload.ts", String.raw`
-              import { mock } from "bun:test";
-              import * as fs from "node:fs";
-              import { tmpdir } from "node:os";
-              import * as path from "node:path";
-              const original = { ...fs };
-              const root = path.join(tmpdir(), "nightly-baseline-fixtures");
-              const legacy = "/home/shayna/tmp";
-              const map = (file) => typeof file === "string" && (file === legacy || file.startsWith(legacy + "/")) ? root + file.slice(legacy.length) : file;
-              mock.module("node:fs", () => ({
-                ...original,
-                mkdirSync: (file, options) => original.mkdirSync(map(file), options),
-                mkdtempSync: (prefix, options) => original.mkdtempSync(map(prefix), options),
-              }));
-              console.log("Diagnostic: filesystem prefix remapped; nightly test and runtime sources unchanged");
-            `);
-          '
-          bun test --preload "$RUNNER_TEMP/foundation-root-preload.ts" apps/server/src/routines/foundations.test.ts
 
       - name: classify untouched macOS MCP cases in clean and pre-load-poisoned processes
         if: runner.os == 'macOS'
@@ -97,7 +68,9 @@ jobs:
           git diff --exit-code "$base" -- apps packages scripts neopi.pin bun.lock package.json
           pin="$(tr -d '[:space:]' < neopi.pin)"
           test "$(git -C "$NPI_DECK_NEOPI_SOURCE" rev-parse HEAD)" = "$pin"
-          export NPI_DECK_BACKEND="$NPI_DECK_NEOPI_SOURCE"
+          export NPI_DECK_BACKEND="$NPI_DECK_HOME/neopi/$pin"
+          test "$(git -C "$NPI_DECK_BACKEND" rev-parse HEAD)" = "$pin"
+          bun --eval 'console.log("DIAG prepared SDK", Bun.resolveSync("@oh-my-pi/pi-coding-agent", process.env.NPI_DECK_BACKEND));'
           export NPI_MCP_DIAG_REPO="$GITHUB_WORKSPACE"
           export NPI_MCP_DIAG_ROOT="$(bun --eval 'import { mkdtempSync } from "node:fs"; import { tmpdir } from "node:os"; import * as path from "node:path"; console.log(mkdtempSync(path.join(tmpdir(), "mcp-classification-")));')"
           bun --eval '
@@ -137,10 +110,12 @@ jobs:
             export PI_CODING_AGENT_DIR="$private/agent"
             export XDG_CONFIG_HOME="$private/config" XDG_CACHE_HOME="$private/cache" XDG_DATA_HOME="$private/data"
             echo "DIAG mode=$mode nightly=$base backend=$pin"
-            args=()
-            if [ "$mode" = poison ]; then args=(--preload "$NPI_MCP_DIAG_ROOT/poison-preload.ts"); fi
             set +e
-            bun test "${args[@]}" ./apps/server/src/routines/steps/mcp.test.ts 2>&1 | tee "$NPI_MCP_DIAG_ROOT/$mode.log"
+            if [ "$mode" = poison ]; then
+              bun test --preload "$NPI_MCP_DIAG_ROOT/poison-preload.ts" ./apps/server/src/routines/steps/mcp.test.ts 2>&1 | tee "$NPI_MCP_DIAG_ROOT/$mode.log"
+            else
+              bun test ./apps/server/src/routines/steps/mcp.test.ts 2>&1 | tee "$NPI_MCP_DIAG_ROOT/$mode.log"
+            fi
             rc=${PIPESTATUS[0]}
             set -e
             echo "DIAG mode=$mode bun_exit=$rc"
@@ -159,18 +134,3 @@ jobs:
             ${{ env.NPI_MCP_DIAG_ROOT }}/*.log
             ${{ env.NPI_MCP_DIAG_ROOT }}/*.exit
             ${{ env.NPI_MCP_DIAG_ROOT }}/poison-preload.ts
-
-      - name: diagnose exact untouched Windows cron teardown
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          git diff --exit-code 2eb440ad4593bb2d3c5382911de023a006eb2dd6 -- apps packages scripts
-          set +e
-          bun test apps/server/src/routines/foundations.test.ts -t '^disabling a cron routine clears next run, and a manual run while disabled does not restore it$'
-          focused_status=$?
-          if [ "$focused_status" -eq 0 ]; then
-            echo "Exact cron test passed in isolation; preserving whole-file context next."
-            bun test apps/server/src/routines/foundations.test.ts
-          else
-            exit "$focused_status"
-          fi
