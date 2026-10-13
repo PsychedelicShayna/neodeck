@@ -1,10 +1,6 @@
-name: CI
+name: Windows cron HEAD diagnostic (never merge)
 
 on:
-  push:
-    branches: [main, nightly]
-  pull_request:
-    branches: [main, nightly]
   workflow_dispatch:
 
 # Cancel in-flight runs on the same ref when a new push lands. Keeps the
@@ -14,21 +10,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ─── Cross-platform matrix: typecheck + test + web build ──────────────────
-  #
-  # All three OSes run the same gates against the same Bun version. Anything
-  # that diverges per-platform belongs in the source, not here — the matrix
-  # exists to catch divergence early.
+  # Disposable #153 HEAD diagnostic. Never merge this workflow or branch.
+  # Test/runtime sources must match the signed PR head before execution.
   matrix:
     name: ${{ matrix.os }} · bun ${{ matrix.bun }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [windows-latest]
         bun: ["1.3.14"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: verify exact PR 153 HEAD sources
+        shell: bash
+        run: |
+          git diff --exit-code 6d8ab26f4f65df0f9c11095ff13cef8b5dcd95b1 -- apps packages scripts neopi.pin bun.lock package.json
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -60,8 +60,16 @@ jobs:
       - name: typecheck (all workspaces)
         run: bun run typecheck
 
-      - name: test (all workspaces)
-        run: bun test
-
-      - name: web build
-        run: bun --cwd apps/web run build
+      - name: diagnose exact HEAD Windows cron teardown
+        shell: bash
+        run: |
+          git diff --exit-code 6d8ab26f4f65df0f9c11095ff13cef8b5dcd95b1 -- apps packages scripts neopi.pin bun.lock package.json
+          set +e
+          bun test apps/server/src/routines/foundations.test.ts -t '^disabling a cron routine clears next run, and a manual run while disabled does not restore it$'
+          focused_status=$?
+          if [ "$focused_status" -eq 0 ]; then
+            echo "Exact cron test passed in isolation; preserving whole-file context next."
+            bun test apps/server/src/routines/foundations.test.ts
+          else
+            exit "$focused_status"
+          fi
