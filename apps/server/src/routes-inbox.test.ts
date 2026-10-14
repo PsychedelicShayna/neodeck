@@ -50,4 +50,29 @@ describe("POST /inbox/:id/promote", () => {
 		expect(body.task.title).toBe("Board should see me");
 		expect(frames.filter((f) => f.type === "tasks_changed")).toHaveLength(1);
 	});
+	test("preserves card front matter and explicit project assignment on promotion", async () => {
+		const app = boot();
+		const metadata = "---\nread-only: true\nworktree: /linked\nmodel: provider/model\nrole: research\ncustom:\n  owner: Captain\n---\n\nInvestigate routing";
+		const item = createInbox({ kind: "ticket", title: "Routing", body: metadata, source: "telegram:-10:42:7" });
+		const res = await app.request(`/inbox/${item.id}/promote`, {
+			method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: "/project" }),
+		});
+		expect(res.status).toBe(201);
+		const body = await res.json() as PromoteInboxItemResponse;
+		expect(body.task.cwd).toBe("/project");
+		expect(body.task.body.startsWith(`${metadata}\n\n---\n_Promoted from inbox`)).toBe(true);
+		expect(body.inbox.processedAt).toBeDefined();
+		expect(body.inbox.source).toBe("telegram:-10:42:7");
+	});
+
+	test("rejects invalid project assignment before creating a card or processing the inbox", async () => {
+		const app = boot();
+		const item = createInbox({ kind: "ticket", title: "Retain on failure" });
+		const res = await app.request(`/inbox/${item.id}/promote`, {
+			method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: 17 }),
+		});
+		expect(res.status).toBe(400);
+		const stored = await (await app.request(`/inbox/${item.id}`)).json() as { processedAt?: string };
+		expect(stored.processedAt).toBeUndefined();
+	});
 });

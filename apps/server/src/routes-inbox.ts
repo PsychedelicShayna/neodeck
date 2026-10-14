@@ -95,6 +95,9 @@ export function buildInboxRouter(): Hono {
 		if (body.stateId && !getState(body.stateId)) {
 			return c.json({ error: `unknown stateId: ${body.stateId}` }, 400);
 		}
+		if (body.cwd !== undefined && typeof body.cwd !== "string") {
+			return c.json({ error: "cwd must be a string" }, 400);
+		}
 		const stateId = body.stateId ?? getDefaultState().id;
 
 		// Provenance footer keeps the link back to the inbox item so the user can
@@ -106,7 +109,7 @@ export function buildInboxRouter(): Hono {
 			: provenance;
 
 		try {
-			const task = createTask({ title: item.title, body: taskBody, stateId });
+			const task = createTask({ title: item.title, body: taskBody, stateId, ...(body.cwd !== undefined ? { cwd: body.cwd } : {}) });
 			// markProcessed defaults to true. Caller passing `false` keeps the item
 			// in the unprocessed list (useful when promoting a recurring template).
 			const shouldMark = body.markProcessed !== false;

@@ -6,6 +6,13 @@ import { getDataDir, loadManagedEnvIntoProcess } from "../../../server/src/env-s
 export interface TelegramBridgeConfig {
 	botToken: string;
 	allowedUserIds: Set<string>;
+	allowedChatIds: Set<string>;
+	requireMention: boolean;
+	mentionPatterns: RegExp[];
+	freeResponseChatIds: Set<string>;
+	freeResponseTopics: Set<string>;
+	allowedTopics: Set<string>;
+	ignoredTopics: Set<string>;
 	deckApiBase: string;
 	deckWsUrl: string;
 	defaultCwd: string;
@@ -32,6 +39,13 @@ export function loadTelegramBridgeConfig(): TelegramBridgeConfig {
 	return {
 		botToken,
 		allowedUserIds,
+		allowedChatIds: parseAllowedChats(process.env.TELEGRAM_GROUP_ALLOWED_CHATS),
+		requireMention: !["0", "false", "no", "off"].includes(process.env.TELEGRAM_REQUIRE_MENTION?.trim().toLowerCase() ?? ""),
+		mentionPatterns: parseMentionPatterns(process.env.TELEGRAM_MENTION_PATTERNS),
+		freeResponseChatIds: parseAllowedChats(process.env.TELEGRAM_FREE_RESPONSE_CHATS, "TELEGRAM_FREE_RESPONSE_CHATS"),
+		freeResponseTopics: parseTopics(process.env.TELEGRAM_FREE_RESPONSE_TOPICS, true),
+		allowedTopics: parseTopics(process.env.TELEGRAM_ALLOWED_TOPICS),
+		ignoredTopics: parseTopics(process.env.TELEGRAM_IGNORED_THREADS),
 		deckApiBase,
 		deckWsUrl,
 		defaultCwd: deck.defaultCwd,
@@ -51,6 +65,29 @@ function parseAllowedUsers(raw: string | undefined): Set<string> {
 		out.add(trimmed);
 	}
 	return out;
+}
+
+export function parseAllowedChats(raw: string | undefined, key = "TELEGRAM_GROUP_ALLOWED_CHATS"): Set<string> {
+	const values = raw?.split(/[\s,]+/).filter(Boolean) ?? [];
+	if (values.some((value) => !/^-\d+$/.test(value))) throw new Error(`${key} requires negative numeric chat IDs.`);
+	return new Set(values);
+}
+
+export function parseTopics(raw: string | undefined, scopedOnly = false): Set<string> {
+	const values = raw?.split(/[\s,]+/).filter(Boolean) ?? [];
+	const pattern = scopedOnly ? /^-\d+:[1-9]\d*$/ : /^(?:-\d+:)?[1-9]\d*$/;
+	if (values.some((value) => !pattern.test(value))) throw new Error("Telegram topics require positive topic IDs or negative-chat-ID:topic-ID pairs; free-response topics require pairs.");
+	return new Set(values);
+}
+
+export function parseMentionPatterns(raw: string | undefined): RegExp[] {
+	if (!raw?.trim()) return [];
+	let values: unknown;
+	try { values = JSON.parse(raw); }
+	catch { values = raw.split(/\r?\n/).map((value) => value.trim()).filter(Boolean); }
+	if (!Array.isArray(values) || values.some((value) => typeof value !== "string" || !value.trim())) throw new Error("TELEGRAM_MENTION_PATTERNS requires nonempty regex strings.");
+	try { return values.map((value: string) => new RegExp(value, "iu")); }
+	catch { throw new Error("TELEGRAM_MENTION_PATTERNS contains an invalid regex."); }
 }
 
 function normalizeBaseUrl(raw: string): string {

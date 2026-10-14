@@ -38,6 +38,15 @@ export class TelegramBridgeStore {
 				updated_at   TEXT NOT NULL
 			)
 		`);
+		this.db.exec(`
+			CREATE TABLE IF NOT EXISTS telegram_session_history (
+				chat_id TEXT NOT NULL, session_id TEXT NOT NULL, session_file TEXT,
+				cwd TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+				PRIMARY KEY (chat_id, session_id)
+			);
+			INSERT OR IGNORE INTO telegram_session_history SELECT * FROM telegram_chat_sessions;
+			CREATE TABLE IF NOT EXISTS telegram_card_defaults (chat_id TEXT PRIMARY KEY, properties TEXT NOT NULL);
+		`);
 	}
 
 	get(chatId: string): ChatSessionMapping | undefined {
@@ -68,10 +77,28 @@ export class TelegramBridgeStore {
 				mapping.createdAt,
 				mapping.updatedAt,
 			);
+		this.db.prepare(`INSERT INTO telegram_session_history VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(chat_id, session_id) DO UPDATE SET session_file = excluded.session_file, updated_at = excluded.updated_at`)
+			.run(mapping.chatId, mapping.sessionId, mapping.sessionFile ?? null, mapping.cwd, mapping.createdAt, mapping.updatedAt);
 	}
 
 	delete(chatId: string): void {
 		this.db.prepare<unknown, [string]>("DELETE FROM telegram_chat_sessions WHERE chat_id = ?").run(chatId);
+	}
+
+	list(chatId: string): ChatSessionMapping[] {
+		return this.db.query<MappingRow, [string]>("SELECT * FROM telegram_session_history WHERE chat_id = ? ORDER BY updated_at DESC")
+			.all(chatId).map(fromRow);
+	}
+
+	getProperties(chatId: string): Record<string, unknown> {
+		const row = this.db.query<{ properties: string }, [string]>("SELECT properties FROM telegram_card_defaults WHERE chat_id = ?").get(chatId);
+		return row ? JSON.parse(row.properties) as Record<string, unknown> : {};
+	}
+
+	setProperties(chatId: string, properties: Record<string, unknown>): void {
+		this.db.prepare("INSERT INTO telegram_card_defaults VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET properties = excluded.properties")
+			.run(chatId, JSON.stringify(properties));
 	}
 
 	close(): void {

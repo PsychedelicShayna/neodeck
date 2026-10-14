@@ -313,6 +313,8 @@ function MessagingSection() {
 	const telegramToken = entries.find((entry) => entry.key === "TELEGRAM_BOT_TOKEN");
 	const telegramAllowed = entries.find((entry) => entry.key === "TELEGRAM_ALLOWED_USERS");
 	const telegramDb = entries.find((entry) => entry.key === "TELEGRAM_BRIDGE_DB_PATH");
+	const telegramGroups = entries.find((entry) => entry.key === "TELEGRAM_GROUP_ALLOWED_CHATS");
+	const telegramMention = entries.find((entry) => entry.key === "TELEGRAM_REQUIRE_MENTION");
 	const telegramInfo = bridges.find((b) => b.name === "telegram");
 
 	function applyBridge(next: BridgeInfo): void {
@@ -344,17 +346,40 @@ function MessagingSection() {
 
 			<BridgeCard
 				title="Telegram"
-				description="DM-only long-poll bridge to local npi-deck."
+				description="Always-on inbox transport: DMs and allowed groups file tasks as kanban cards. Explicit /chat reuses a persistent NeoPi session per chat/topic; the standalone bridge cannot restart NeoPi."
 				info={telegramInfo}
 				credentialRows={[
 					{ label: "Bot token", entry: telegramToken },
 					{ label: "Allowed users", entry: telegramAllowed },
+					{ label: "Allowed group chats", entry: telegramGroups },
+					{ label: "Require group mention", entry: telegramMention },
+					{ label: "Wake patterns", entry: entries.find((entry) => entry.key === "TELEGRAM_MENTION_PATTERNS") },
+					{ label: "Free-response chats", entry: entries.find((entry) => entry.key === "TELEGRAM_FREE_RESPONSE_CHATS") },
+					{ label: "Free-response topics", entry: entries.find((entry) => entry.key === "TELEGRAM_FREE_RESPONSE_TOPICS") },
+					{ label: "Allowed topics", entry: entries.find((entry) => entry.key === "TELEGRAM_ALLOWED_TOPICS") },
+					{ label: "Ignored topics", entry: entries.find((entry) => entry.key === "TELEGRAM_IGNORED_THREADS") },
 					{ label: "Mapping DB path", entry: telegramDb },
 				]}
 				onEdit={setEditing}
 				onApplyBridge={applyBridge}
 				onError={setError}
 			/>
+			<div className="rounded-md border border-line bg-paper-2 p-4 text-sm text-ink-3">
+				<p>Create a separate bot with BotFather, save its token and numeric sender IDs, then Start.
+					Do not reuse a token already polled by Hermes or another receiver. Credentials stay masked; never paste tokens into logs.</p>
+				<p className="mt-2">Groups require both an allowed negative chat ID and an allowed sender.
+					By default commands, mentions and replies to this bot invoke it. Optional regex wake patterns and free-response chats/topics
+					also invoke allowed senders. Allowed/ignored topics filter even commands; ignored topics win. DMs are not topic-filtered.</p>
+				<p className="mt-2">Send task text or a checklist to create one or more cards through the inbox.
+					Use /capture to keep an item unprocessed, /chat for agent conversation, /bind to reuse an existing session,
+					and /sessions search or /resume by title, number or ID for retained chat/topic bindings. /title shows the current title.
+					/new clears only the binding, not the running NeoPi instance.</p>
+				<p className="mt-2">Card properties accept leading YAML front matter or /properties defaults:
+					read-only, worktree, model, role and custom keys are retained on every decomposed card.
+					Card creation does not itself execute the card. /help lists all commands.</p>
+				<p className="mt-2">Unsupported attachments are not downloaded or processed; captions can still become tasks or explicit chat,
+					with a warning first. Photos work in /chat, which shows typing while the bound session works.</p>
+			</div>
 
 			<div className="rounded-md border border-dashed border-line bg-paper-2 p-4">
 				<div className="meta">Slack</div>

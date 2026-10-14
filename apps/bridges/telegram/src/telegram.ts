@@ -5,11 +5,28 @@ export interface TelegramUpdate {
 
 export interface TelegramMessage {
 	message_id: number;
-	chat: { id: number; type: string };
+	chat: { id: number; type: string; is_forum?: boolean };
+	message_thread_id?: number;
+	is_topic_message?: boolean;
+	direct_messages_topic?: { topic_id: number };
+	reply_to_message?: { from?: { id: number; is_bot?: boolean } };
+	location?: { latitude: number; longitude: number };
+	venue?: { title: string; address: string; location: { latitude: number; longitude: number } };
 	from?: { id: number; is_bot?: boolean; username?: string; first_name?: string };
 	text?: string;
 	caption?: string;
 	photo?: TelegramPhotoSize[];
+	document?: { file_id: string };
+	audio?: { file_id: string };
+	voice?: { file_id: string };
+	video?: { file_id: string };
+	video_note?: { file_id: string };
+	animation?: { file_id: string };
+	sticker?: { file_id: string };
+	contact?: object;
+	poll?: object;
+	dice?: object;
+	paid_media?: object;
 }
 
 export interface TelegramPhotoSize {
@@ -49,6 +66,14 @@ export class TelegramApi {
 		this.fileBase = `https://api.telegram.org/file/bot${botToken}`;
 	}
 
+	getMe(): Promise<{ id: number; username: string }> {
+		return this.call("getMe", {});
+	}
+
+	setCommands(commands: { command: string; description: string }[]): Promise<boolean> {
+		return this.call("setMyCommands", { commands });
+	}
+
 	getUpdates(offset: number | undefined, timeout: number): Promise<TelegramUpdate[]> {
 		return this.call<TelegramUpdate[]>("getUpdates", {
 			...(offset !== undefined ? { offset } : {}),
@@ -57,13 +82,18 @@ export class TelegramApi {
 		});
 	}
 
-	sendMessage(chatId: number | string, text: string, replyToMessageId?: number): Promise<TelegramSentMessage> {
+	sendMessage(chatId: number | string, text: string, replyToMessageId?: number, thread?: { message_thread_id?: number; direct_messages_topic_id?: number }): Promise<TelegramSentMessage> {
 		return this.call<TelegramSentMessage>("sendMessage", {
 			chat_id: chatId,
 			text,
 			disable_web_page_preview: true,
 			...(replyToMessageId !== undefined ? { reply_to_message_id: replyToMessageId } : {}),
+			...thread,
 		});
+	}
+
+	sendTyping(chatId: number | string, thread?: { message_thread_id?: number; direct_messages_topic_id?: number }): Promise<boolean> {
+		return this.call("sendChatAction", { chat_id: chatId, action: "typing", ...thread });
 	}
 
 	editMessageText(chatId: number | string, messageId: number, text: string): Promise<TelegramSentMessage> {
@@ -78,18 +108,30 @@ export class TelegramApi {
 	async downloadPhoto(photo: TelegramPhotoSize): Promise<{ data: string; mimeType: string }> {
 		const file = await this.call<TelegramFile>("getFile", { file_id: photo.file_id });
 		if (!file.file_path) throw new Error("Telegram getFile returned no file_path");
-		const res = await fetch(`${this.fileBase}/${file.file_path}`);
+		let res: Response;
+		try {
+			res = await fetch(`${this.fileBase}/${file.file_path}`, { signal: AbortSignal.timeout(30_000) });
+		} catch {
+			throw new Error("Telegram file download failed (network or timeout).");
+		}
 		if (!res.ok) throw new Error(`Telegram file download failed: ${res.status}`);
 		const bytes = Buffer.from(await res.arrayBuffer());
 		return { data: bytes.toString("base64"), mimeType: mimeTypeForTelegramPath(file.file_path) };
 	}
 
 	private async call<T>(method: string, body: Record<string, unknown>): Promise<T> {
-		const res = await fetch(`${this.apiBase}/${method}`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify(body),
-		});
+		let res: Response;
+		try {
+			res = await fetch(`${this.apiBase}/${method}`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+				signal: AbortSignal.timeout(method === "getUpdates" ? (Number(body.timeout) + 10) * 1000 : 30_000),
+			});
+		} catch {
+			// Native fetch errors can contain the credential-bearing URL.
+			throw new Error(`Telegram ${method} failed (network or timeout).`);
+		}
 		let payload: TelegramResponse<T>;
 		try {
 			payload = (await res.json()) as TelegramResponse<T>;
@@ -97,7 +139,8 @@ export class TelegramApi {
 			throw new Error(`Telegram ${method} failed: HTTP ${res.status}`);
 		}
 		if (!res.ok || !payload.ok || payload.result === undefined) {
-			throw new Error(`Telegram ${method} failed: ${payload.description ?? `HTTP ${res.status}`}`);
+			const description = payload.description?.replaceAll(this.botToken, "[redacted]");
+			throw new Error(`Telegram ${method} failed: ${description ?? `HTTP ${res.status}`}`);
 		}
 		return payload.result;
 	}

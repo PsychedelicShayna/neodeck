@@ -1,4 +1,5 @@
-import type { CreateSessionRequest, CreateSessionResponse, ImageAttachment, ServerFrame } from "@npi-deck/protocol";
+import type { CreateSessionRequest, CreateSessionResponse, ImageAttachment, ServerFrame, InboxItem, ListInboxResponse, ListSessionsResponse, ListModelsResponse, Task, PromoteInboxItemResponse } from "@npi-deck/protocol";
+import type { IntakeCard } from "./commands.ts";
 
 export class SessionNotActiveError extends Error {
 	constructor(sessionId: string) {
@@ -28,10 +29,41 @@ export class DeckClient {
 		});
 	}
 
-	async deleteSession(sessionId: string): Promise<void> {
-		const res = await fetch(`${this.apiBase}/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
-		if (res.status === 404) return;
-		if (!res.ok) throw new Error(`deck delete session failed: ${res.status}`);
+	async listSessions(): Promise<ListSessionsResponse["sessions"]> {
+		return (await this.request<ListSessionsResponse>("/api/sessions", {})).sessions;
+	}
+
+	async listInbox(): Promise<InboxItem[]> {
+		return (await this.request<ListInboxResponse>("/api/inbox", {})).items;
+	}
+
+	capture(title: string, body: string, source: string): Promise<InboxItem> {
+		return this.request("/api/inbox", { method: "POST", body: JSON.stringify({ kind: "capture", title, body, source }) });
+	}
+
+	async fileCards(cards: IntakeCard[], source: string): Promise<Task[]> {
+		const tasks: Task[] = [];
+		for (const card of cards) {
+			const item = await this.request<InboxItem>("/api/inbox", { method: "POST",
+				body: JSON.stringify({ kind: "ticket", title: card.title, body: card.body, source }) });
+			const promoted = await this.request<PromoteInboxItemResponse>(`/api/inbox/${encodeURIComponent(item.id)}/promote`, {
+				method: "POST", body: JSON.stringify({ ...(card.cwd ? { cwd: card.cwd } : {}), ...(card.stateId ? { stateId: card.stateId } : {}) }),
+			});
+			tasks.push(promoted.task);
+		}
+		return tasks;
+	}
+
+	sessionAction(sessionId: string, action: "abort" | "compact", body: Record<string, unknown> = {}): Promise<unknown> {
+		return this.request(`/api/sessions/${encodeURIComponent(sessionId)}/${action}`, { method: "POST", body: JSON.stringify(body) });
+	}
+
+	updateSession(sessionId: string, body: Record<string, unknown>): Promise<unknown> {
+		return this.request(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "PATCH", body: JSON.stringify(body) });
+	}
+
+	models(sessionId: string): Promise<ListModelsResponse> {
+		return this.request(`/api/models?sessionId=${encodeURIComponent(sessionId)}`, {});
 	}
 
 	promptSession(args: {
