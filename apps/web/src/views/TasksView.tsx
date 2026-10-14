@@ -66,6 +66,7 @@ export function TasksView() {
 			const data = await tasksApi.list({ cwd: toQueryCwd(projectFilter) });
 			if (seq !== refreshSeq.current) return;
 			setTasks(data.tasks);
+			setOpenTask((current) => current ? data.tasks.find((t) => t.id === current.id) : undefined);
 			setStates(data.states);
 			setProjects(data.projects);
 			setError(undefined);
@@ -118,15 +119,11 @@ export function TasksView() {
 		return map;
 	}, [tasks, states]);
 
-	async function onCreate(stateId: string, title: string): Promise<void> {
-		try {
-			// A card created while filtered to a project belongs to that project.
-			const cwd = projectFilter.kind === "cwd" ? projectFilter.cwd : undefined;
-			const created = await tasksApi.create({ title, stateId, ...(cwd ? { cwd } : {}) });
-			setTasks((prev) => [...prev, created]);
-		} catch (e) {
-			setError(String(e));
-		}
+	async function onCreate(stateId: string, title: string, body: string): Promise<void> {
+		// Routing stays independent from opaque YAML properties in the body.
+		const cwd = projectFilter.kind === "cwd" ? projectFilter.cwd : undefined;
+		const created = await tasksApi.create({ title, body, stateId, ...(cwd ? { cwd } : {}) });
+		setTasks((prev) => [...prev.filter((t) => t.id !== created.id), created]);
 	}
 
 	function onDragStart(ev: DragStartEvent): void {
@@ -254,6 +251,27 @@ export function TasksView() {
 		}
 	}
 
+	async function assignOpenTask(patch: Parameters<typeof tasksApi.update>[1]): Promise<void> {
+		if (!openTask) return;
+		const id = openTask.id;
+		const updated = await tasksApi.update(id, patch);
+		setTasks((prev) => prev.map((t) => t.id === id ? updated : t));
+		setOpenTask((current) => current?.id === id ? updated : current);
+		const run = await tasksApi.assign(id);
+		setTasks((prev) => prev.map((t) => t.id === id ? { ...t, run } : t));
+		setOpenTask((current) => current?.id === id ? { ...current, run } : current);
+		await refresh();
+	}
+
+	async function cancelOpenTask(): Promise<void> {
+		if (!openTask) return;
+		const id = openTask.id;
+		const run = await tasksApi.cancel(id);
+		setTasks((prev) => prev.map((t) => t.id === id ? { ...t, run } : t));
+		setOpenTask((current) => current?.id === id ? { ...current, run } : current);
+		await refresh();
+	}
+
 	async function deleteOpenTask(): Promise<void> {
 		if (!openTask) return;
 		if (!confirm(`Delete "${openTask.title}"?`)) return;
@@ -340,7 +358,7 @@ export function TasksView() {
 												key={s.id}
 												state={s}
 												tasks={tasksByState[s.id] ?? []}
-												onCreate={(stateId, title) => void onCreate(stateId, title)}
+												onCreate={onCreate}
 												onOpen={(t) => setOpenTask(t)}
 												onRenameRequest={() => {
 													setShowStateConfig(true);
@@ -408,6 +426,8 @@ export function TasksView() {
 				onSave={(patch) => void saveTask(patch)}
 				onDelete={() => void deleteOpenTask()}
 				onArchive={() => void archiveOpenTask()}
+				onAssign={assignOpenTask}
+				onCancel={cancelOpenTask}
 				onOpenInChat={() => openTask && void openInChat(openTask)}
 			/>
 		</>

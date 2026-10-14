@@ -4,18 +4,14 @@ import {
 	BookOpen,
 	ChevronDown,
 	ChevronRight,
-	Eye,
 	File as FileIcon,
-	FilePlus,
 	FileText,
 	Folder,
 	FolderOpen,
 	Link2,
 	Link2Off,
 	Loader2,
-	Pencil,
 	Network,
-	Save,
 	Search,
 	X,
 } from "lucide-react";
@@ -39,7 +35,7 @@ import { KbCommandPalette } from "./KbCommandPalette";
  * frontmatter + outbound list. URL state in `?path=<rel>` drives the open
  * file; back/forward works.
  *
- * Editor (T-36) and graph view (T-37/38) plug into this shell.
+ * Agents populate project-scoped notes; this cockpit is a read-only graph browser.
  */
 export function KbView() {
 	const [params, setParams] = useSearchParams();
@@ -65,9 +61,7 @@ export function KbView() {
 	const kbChangeCounter = useStore((s) => s.kbChangeCounter);
 
 	// Quick-open palette state. Bound to Ctrl-P / Cmd-P globally while /kb is
-	// mounted. We swallow the default browser print dialog only when the
-	// active element isn't an input or textarea so cmd-P from inside the
-	// editor still prints if the user really wants to.
+	// mounted. Preserve the print binding while an input or textarea has focus.
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	useEffect(() => {
 		function onKey(e: KeyboardEvent): void {
@@ -75,9 +69,7 @@ export function KbView() {
 			if (!mod || e.key.toLowerCase() !== "p") return;
 			const target = e.target as HTMLElement | null;
 			const tag = target?.tagName;
-			// Skip the binding when the user is typing into an input or textarea
-			// (e.g. the editor). Esc closes the editor; if they want search they
-			// can blur first.
+			// Do not intercept typing in the search palette.
 			if (tag === "INPUT" || tag === "TEXTAREA") return;
 			e.preventDefault();
 			setPaletteOpen((open) => !open);
@@ -89,7 +81,7 @@ export function KbView() {
 	// Setup detection. An empty/missing kb is a first-run state; we render a
 	// welcome panel inside main instead of an empty tree so a fresh deck doesn't
 	// look broken. Refetched on every kb_changed so the panel disappears the
-	// moment the user creates their first file.
+	// moment the project agent creates its first file.
 	const [status, setStatus] = useState<KbStatusResponse | null>(null);
 	useEffect(() => {
 		let cancelled = false;
@@ -141,12 +133,7 @@ export function KbView() {
 			main={
 				<div className="flex h-full min-h-0 flex-col">
 					{status && status.fileCount === 0 ? (
-						<KbWelcome
-							status={status}
-							onInitialized={() => {
-								void kbApi.status().then(setStatus).catch(() => undefined);
-							}}
-						/>
+						<KbWelcome status={status} />
 					) : (
 						<>
 							<KbTopBar
@@ -349,30 +336,7 @@ function GraphPreviewEmpty() {
 	);
 }
 
-function KbWelcome({
-	status,
-	onInitialized,
-}: {
-	status: KbStatusResponse;
-	onInitialized: () => void;
-}) {
-	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState<string | undefined>();
-	const onCreate = useCallback(async () => {
-		setBusy(true);
-		setError(undefined);
-		try {
-			const res = await kbApi.init();
-			if (res.refusedReason) {
-				setError(res.refusedReason);
-			}
-			onInitialized();
-		} catch (e) {
-			setError(String((e as Error).message ?? e));
-		} finally {
-			setBusy(false);
-		}
-	}, [onInitialized]);
+function KbWelcome({ status }: { status: KbStatusResponse }) {
 	return (
 		<div className="flex h-full min-h-0 flex-col items-center justify-center px-6 py-10">
 			<div className="max-w-lg text-left">
@@ -387,29 +351,13 @@ function KbWelcome({
 					{status.exists ? " (which is empty)" : " (which doesn't exist yet)"}.
 				</p>
 				<p className="mt-2 text-sm text-ink-3">
-					Click below to scaffold a starter <span className="font-mono">README.md</span> at
-					that location. From there you can drop in your own markdown files; the tree, the
-					graph, and the file pane all refresh live as you add content.
+					Ask your project agent to create notes through its scoped KB tools. The tree,
+					graph, and file pane refresh live as the agent adds content.
 				</p>
-				<div className="mt-5 flex items-center gap-3">
-					<button
-						type="button"
-						onClick={() => void onCreate()}
-						disabled={busy}
-						className="btn-primary inline-flex h-9 items-center gap-2 rounded-md bg-accent px-3 text-sm font-medium text-paper transition-opacity disabled:opacity-60"
-					>
-						{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FilePlus className="h-3.5 w-3.5" />}
-						Create starter README
-					</button>
-					<span className="text-2xs text-ink-3">
-						Or set <span className="font-mono text-ink-2">NPI_DECK_KB_ROOT</span> and restart the deck.
-					</span>
-				</div>
-				{error ? (
-					<div className="mt-3 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 font-mono text-2xs text-warn">
-						{error}
-					</div>
-				) : null}
+				<p className="mt-5 text-2xs text-ink-3">
+					Set <span className="font-mono text-ink-2">NPI_DECK_KB_ROOT</span> to point at your
+					vault and restart the deck.
+				</p>
 				<div className="mt-6 border-t border-line pt-4 text-xs text-ink-3">
 					<div className="font-mono text-2xs uppercase tracking-meta text-ink-4">
 						What this is NOT
@@ -652,19 +600,7 @@ function KbFilePane({
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | undefined>();
 
-	// Edit state. When `draft === null` we're in view mode; once the user
-	// hits Edit, we capture the rawContent into `draft` and switch.
-	const [draft, setDraft] = useState<string | null>(null);
-	const [saving, setSaving] = useState(false);
-	const [saveError, setSaveError] = useState<string | undefined>();
-
-	const dirty = draft !== null && file !== null && draft !== file.rawContent;
-	const editing = draft !== null;
-
 	useEffect(() => {
-		// Don't blow away the user's buffer when the watcher fires for a
-		// file they're editing — defer the refetch until they exit edit mode.
-		if (editing) return;
 		let cancelled = false;
 		setLoading(true);
 		setError(undefined);
@@ -686,50 +622,8 @@ function KbFilePane({
 		return () => {
 			cancelled = true;
 		};
-	}, [path, kbChangeCounter, editing]);
+	}, [path, kbChangeCounter]);
 
-	const startEdit = useCallback(() => {
-		if (!file) return;
-		setDraft(file.rawContent);
-		setSaveError(undefined);
-	}, [file]);
-
-	const cancelEdit = useCallback(() => {
-		if (dirty && !window.confirm("Discard unsaved changes?")) return;
-		setDraft(null);
-		setSaveError(undefined);
-	}, [dirty]);
-
-	const save = useCallback(async () => {
-		if (draft === null || !file) return;
-		setSaving(true);
-		setSaveError(undefined);
-		try {
-			const next = await kbApi.put(file.path, draft);
-			setFile(next);
-			setDraft(null);
-		} catch (e) {
-			setSaveError(String((e as Error).message ?? e));
-		} finally {
-			setSaving(false);
-		}
-	}, [draft, file]);
-
-	// Ctrl/Cmd-S saves; Esc discards.
-	useEffect(() => {
-		if (!editing) return;
-		function onKey(e: KeyboardEvent): void {
-			if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-				e.preventDefault();
-				void save();
-			} else if (e.key === "Escape") {
-				e.preventDefault();
-				cancelEdit();
-			}
-		}
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
-	}, [editing, save, cancelEdit]);
 
 	const handleWikilink = useCallback(
 		(href: string) => {
@@ -741,8 +635,6 @@ function KbFilePane({
 				return true;
 			}
 			if (href.startsWith("kb-unresolved:")) {
-				const target = decodeURIComponent(href.slice("kb-unresolved:".length));
-				if (file) void createUnresolved(target, file.path, onNavigate);
 				return true;
 			}
 			return false;
@@ -775,44 +667,11 @@ function KbFilePane({
 							{typeof file.frontmatter?.name === "string" && (file.frontmatter.name as string).trim()
 								? (file.frontmatter.name as string)
 								: titleFromPath(file.path)}
-							{dirty ? <span className="ml-1 text-warn" title="unsaved changes">●</span> : null}
 						</h1>
 						<div className="mt-1 font-mono text-2xs text-ink-3">{file.path}</div>
 					</div>
 					<div className="ml-auto flex items-center gap-1">
-						{editing ? (
-							<>
-								<button
-									type="button"
-									onClick={() => void save()}
-									disabled={!dirty || saving}
-									className="btn-ghost inline-flex h-7 items-center gap-1 px-2 text-xs disabled:opacity-50"
-									title="Save (Ctrl-S)"
-								>
-									{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-									Save
-								</button>
-								<button
-									type="button"
-									onClick={cancelEdit}
-									className="btn-ghost inline-flex h-7 items-center gap-1 px-2 text-xs"
-									title="Discard (Esc)"
-								>
-									<X className="h-3.5 w-3.5" />
-									Cancel
-								</button>
-							</>
-						) : (
-							<>
-								<button
-									type="button"
-									onClick={startEdit}
-									className="btn-ghost inline-flex h-7 items-center gap-1 px-2 text-xs"
-									title="Edit (or click anywhere in the body)"
-								>
-									<Pencil className="h-3.5 w-3.5" />
-									Edit
-								</button>
+						<span className="text-2xs text-ink-3">Agent-maintained · read only</span>
 								{onClose ? (
 									<button
 										type="button"
@@ -824,8 +683,6 @@ function KbFilePane({
 										<X className="h-3.5 w-3.5" />
 									</button>
 								) : null}
-							</>
-						)}
 					</div>
 				</div>
 				{file.frontmatterError ? (
@@ -833,57 +690,14 @@ function KbFilePane({
 						frontmatter: {file.frontmatterError}
 					</div>
 				) : null}
-				{saveError ? (
-					<div className="mt-2 rounded-md border border-danger/30 bg-danger/10 px-2 py-1 font-mono text-2xs text-danger">
-						save failed: {saveError}
-					</div>
-				) : null}
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-				{editing ? (
-					<textarea
-						value={draft}
-						onChange={(e) => setDraft(e.target.value)}
-						spellCheck={false}
-						autoFocus
-						className="h-full min-h-[60vh] w-full resize-none whitespace-pre-wrap break-words rounded-md border border-line bg-paper-2 p-3 font-mono text-xs leading-relaxed text-ink focus:border-accent focus:outline-none"
-					/>
-				) : (
-					<KbMarkdown body={file.bodyForRender} onWikilink={handleWikilink} />
-				)}
+				<KbMarkdown body={file.bodyForRender} onWikilink={handleWikilink} />
 			</div>
 		</div>
 	);
 }
 
-/**
- * Prompt the user to create a file for an unresolved wikilink target. The
- * filename defaults to the bare target (cleaned for filesystem safety);
- * directory defaults to the current file's parent. Cancel = no-op.
- */
-async function createUnresolved(target: string, currentFilePath: string, onNavigate: (p: string) => void): Promise<void> {
-	const currentDir = currentFilePath.includes("/") ? currentFilePath.slice(0, currentFilePath.lastIndexOf("/")) : "";
-	const slug = target.replace(/[\\:*?"<>|]/g, "-").replace(/\.md$/i, "");
-	const defaultPath = currentDir ? `${currentDir}/${slug}.md` : `${slug}.md`;
-	const proposed = window.prompt(
-		`Create a new kb file for unresolved wikilink "${target}"?\nPath (relative to kb root):`,
-		defaultPath,
-	);
-	if (!proposed) return;
-	const normalized = proposed.trim().replace(/\\/g, "/").replace(/^\/+/, "");
-	if (!normalized.toLowerCase().endsWith(".md")) {
-		window.alert("Path must end in .md");
-		return;
-	}
-	const today = new Date().toISOString().slice(0, 10);
-	const stub = `---\ntype: knowledge\ncreated: ${today}\nupdated: ${today}\ntags: []\n---\n\n# ${target}\n\n`;
-	try {
-		await kbApi.create(normalized, stub);
-		onNavigate(normalized);
-	} catch (e) {
-		window.alert(`create failed: ${(e as Error).message ?? e}`);
-	}
-}
 
 // ─── Inspector ───────────────────────────────────────────────────────────
 
@@ -1136,6 +950,7 @@ const KbMarkdown = memo(function KbMarkdown({
 		({ href, children, ...rest }: WikiAnchorProps) => {
 			const isKbLink = href?.startsWith("kb-link:") ?? false;
 			const isUnresolved = href?.startsWith("kb-unresolved:") ?? false;
+			if (isUnresolved) return <span className="text-ink-3 italic" title="Unresolved — ask the project agent to create this note">{children}</span>;
 			// Everything that isn't an in-app wikilink and points at an outside
 			// URL should open in a new tab so reading the kb isn't disrupted.
 			const isExternal =

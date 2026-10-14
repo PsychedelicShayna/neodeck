@@ -1,8 +1,6 @@
 import type {
 	CompleteOnboardingRequest,
 	OnboardingState,
-	SeedKbSystemRequest,
-	SeedKbSystemResponse,
 } from "@npi-deck/protocol";
 
 const BASE = "/api/onboarding";
@@ -27,13 +25,6 @@ export const onboardingApi = {
 		return req<OnboardingState>("/complete", {
 			method: "POST",
 			body: JSON.stringify({ skipped } satisfies CompleteOnboardingRequest),
-		});
-	},
-	seedKbSystem(kbRoot?: string): Promise<SeedKbSystemResponse> {
-		const body: SeedKbSystemRequest = kbRoot ? { kbRoot } : {};
-		return req<SeedKbSystemResponse>("/seed-kb-system", {
-			method: "POST",
-			body: JSON.stringify(body),
 		});
 	},
 };

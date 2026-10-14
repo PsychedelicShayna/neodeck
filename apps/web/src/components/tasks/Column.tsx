@@ -13,7 +13,7 @@ import { TaskCard } from "./TaskCard";
 interface Props {
 	state: TaskState;
 	tasks: Task[];
-	onCreate: (stateId: string, title: string) => void;
+	onCreate: (stateId: string, title: string, body: string) => Promise<void>;
 	onOpen: (task: Task) => void;
 	onRenameRequest?: (state: TaskState) => void;
 	isDraggingColumns: boolean;
@@ -60,16 +60,25 @@ export function Column({
 
 	const [composing, setComposing] = useState(false);
 	const [draft, setDraft] = useState("");
+	const [body, setBody] = useState("");
+	const [creating, setCreating] = useState(false);
+	const [error, setError] = useState<string>();
 
-	function submit(): void {
+	async function submit(): Promise<void> {
 		const t = draft.trim();
-		if (!t) {
+		if (!t || creating) return;
+		setCreating(true);
+		setError(undefined);
+		try {
+			await onCreate(state.id, t, body);
+			setDraft("");
+			setBody("");
 			setComposing(false);
-			return;
+		} catch (e) {
+			setError(String(e));
+		} finally {
+			setCreating(false);
 		}
-		onCreate(state.id, t);
-		setDraft("");
-		setComposing(false);
 	}
 
 	// Only highlight as a drop target while a task is being dragged. Column-vs-
@@ -134,27 +143,49 @@ export function Column({
 
 				{composing ? (
 					<div className="mt-2 border border-line bg-paper-2 p-2">
-						<textarea
+						<input
 							autoFocus
-							rows={2}
+							aria-label="Task title"
 							value={draft}
+							disabled={creating}
 							onChange={(e) => setDraft(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter" && !e.shiftKey) {
-									e.preventDefault();
-									submit();
-								}
-								if (e.key === "Escape") {
-									setDraft("");
-									setComposing(false);
-								}
-							}}
-							placeholder="Task title — enter to add"
-							className="w-full resize-none bg-transparent text-sm placeholder:text-ink-4 focus:outline-none"
+							placeholder="Task title"
+							className="w-full bg-transparent text-sm placeholder:text-ink-4 focus:outline-none"
 						/>
-						<div className="mt-1 flex justify-between font-mono text-2xs text-ink-4">
-							<span>esc cancel</span>
-							<span>enter to add</span>
+						<label className="mt-2 block font-mono text-2xs text-ink-3">
+							Body / raw YAML properties
+							<textarea
+								rows={7}
+								value={body}
+								disabled={creating}
+								onChange={(e) => setBody(e.target.value)}
+								placeholder={"---\nread-only: true\nworktree: /absolute/path/to/existing-worktree\nmodel: provider/id\nrole: default\n---\nTask instructions"}
+								className="mt-1 w-full resize-y bg-transparent font-mono text-xs placeholder:text-ink-4 focus:outline-none"
+							/>
+						</label>
+						{error ? <p role="alert" className="mt-1 text-xs text-danger">{error}</p> : null}
+						<div className="mt-2 flex justify-end gap-2">
+							<button
+								type="button"
+								disabled={creating}
+								onClick={() => {
+									setDraft("");
+									setBody("");
+									setError(undefined);
+									setComposing(false);
+								}}
+								className="btn-ghost h-7 px-2 text-xs"
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								disabled={creating || !draft.trim()}
+								onClick={() => void submit()}
+								className="btn-primary h-7 px-2 text-xs"
+							>
+								{creating ? "Adding…" : "Add task"}
+							</button>
 						</div>
 					</div>
 				) : (

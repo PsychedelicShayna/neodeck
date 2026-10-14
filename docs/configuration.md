@@ -97,6 +97,67 @@ chain replaces the deck's for this model. The deck's `default` chain stays in
 force for other models the chat switches to. Edit the active model's chain
 from the model picker's **Fallbacks** row, or in Settings → NeoPi.
 
+### Card agents
+
+Assigning a card starts its agent without an approval step. Queued assignments
+share one global limit; completed runs record their outcome and move to the
+configured done/review column. Failed or cancelled runs move to the failure
+column. The card modal exposes cancellation and the persisted run result.
+
+| Var | Default | Restart? | Notes |
+|---|---|---|---|
+| `NPI_DECK_CARD_AGENT_CONCURRENCY` | `12` | yes | Positive safe integer; extra cards queue. Values such as 16 or 32 have no hard-coded cap. |
+| `NPI_DECK_CARD_AGENT_MODEL` | deck new-chat default | yes | Default model selector for card work. |
+| `NPI_DECK_CARD_AGENT_ROLE` | _(none)_ | yes | Default NeoPi model role when no default model is explicitly selected. |
+| `NPI_DECK_CARD_AGENT_ACTIVE_STATE` | `s_active` | yes | Column id entered when execution begins. |
+| `NPI_DECK_CARD_AGENT_DONE_STATE` | `s_done` | yes | Done/review column id entered on successful completion. |
+| `NPI_DECK_CARD_AGENT_FAILURE_STATE` | `s_blocked` | yes | Column id entered on failure or cancellation. |
+
+Card properties are leading YAML in the card body, not a separate metadata
+store. All card-creating API requests accept a `properties` mapping; it merges
+into existing front matter without replacing unrelated entries or comments.
+The UI quick-add and modal raw-body editor also accept YAML directly:
+
+```yaml
+---
+read-only: true
+worktree: /absolute/path/to/an/existing/git-worktree
+role: researcher
+custom:
+  tags: [investigation, routing]
+---
+Research the linked source and report the result.
+```
+
+`read-only` must be a boolean. `worktree`, `model` and `role` must be nonempty
+strings; a linked worktree must be an existing absolute registered git-worktree
+root; the run records its canonical directory, including when the supplied path
+uses a filesystem alias or Git's platform-specific path spelling. A card's
+explicit `model` or `role` overrides the default selector. Other properties,
+including nested mappings and arrays, remain part of its body.
+
+Without `worktree`, execution creates a fresh detached temporary worktree from
+the card's explicit project `cwd`, or the configured default working directory
+when the card is Unassigned. Cleanup removes only worktrees owned by that run,
+never a linked user worktree. Routing remains separate: a linked worktree or
+YAML property does not infer project filing; omitted API `cwd` means Unassigned.
+Inbox provenance stays after the leading YAML. Routines accept both `body`
+and typed `properties`; chat `/task add` accepts multiline YAML or a JSON
+card-creation object.
+
+Card workers use `kb_read` and `kb_write` through a run-scoped bearer capability.
+The server derives project identity and read-only policy from the active run;
+workers cannot claim a different project. Completion or cancellation revokes
+the capability, and read-only capabilities reject knowledge writes.
+
+Read-only workers restrict the actual SDK capability set to bounded local
+`card_read`/`card_search` and explicitly requested `kb_read`. Mutation,
+execution, subagent, extension, MCP, LSP and ambient context capabilities are
+not admitted. Knowledge is not automatically injected. On Linux, `bwrap`
+adds a read-only filesystem boundary and is required; missing sandbox support
+fails the run instead of downgrading it. The SDK restriction also applies
+on other platforms.
+
 ### Sessions
 
 | Var | Default | Restart? | Notes |

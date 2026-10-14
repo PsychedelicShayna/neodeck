@@ -101,12 +101,13 @@ export function buildInboxRouter(): Hono {
 		// trace where the task originated even after the inbox is cleared out.
 		const stamp = new Date(item.createdAt).toISOString().slice(0, 10);
 		const provenance = `_Promoted from inbox · ${item.kind} · ${stamp} · ${item.id}_`;
-		const taskBody = item.body.trim().length > 0
-			? `${item.body}\n\n---\n${provenance}`
+		const content = body.body ?? item.body;
+		const taskBody = content.trim().length > 0
+			? `${content}\n\n---\n${provenance}`
 			: provenance;
 
 		try {
-			const task = createTask({ title: item.title, body: taskBody, stateId });
+			const task = createTask({ title: item.title, body: taskBody, stateId, properties: body.properties, cwd: body.cwd });
 			// markProcessed defaults to true. Caller passing `false` keeps the item
 			// in the unprocessed list (useful when promoting a recurring template).
 			const shouldMark = body.markProcessed !== false;

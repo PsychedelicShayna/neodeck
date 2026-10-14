@@ -16,6 +16,11 @@
           "minLength": 1,
           "description": "User prompt. Templated. Long prompts are fine; budget caps total LLM tokens, not prompt length."
         },
+        "kb_inputs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Explicit requested KB note paths. Omitted or empty: no KB reads or context."
+        },
         "model": {
           "type": "string",
           "description": "Model id (e.g. claude-sonnet-4-6). Defaults to the deck's active model setting."

@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -14,9 +14,8 @@ let saved: Record<string, string | undefined>;
 let kbRoot: string;
 let router: InternalUrlRouter;
 
-beforeAll(async () => {
-	await loadBackend();
-});
+// Provision the native SDK before admitting cases; cold backend loading is not a case hook.
+await loadBackend();
 
 beforeEach(() => {
 	saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));

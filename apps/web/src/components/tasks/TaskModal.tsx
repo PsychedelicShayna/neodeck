@@ -14,13 +14,13 @@ interface Props {
 	onDelete: () => void;
 	onArchive: () => void;
 	onOpenInChat: () => void;
+	onAssign: (patch: { title: string; body: string; stateId: string; cwd: string | null }) => Promise<void>;
+	onCancel: () => Promise<void>;
 }
 
 /**
- * Centered modal for full task detail / edit. Title is a large inline-editable
- * input; body uses MarkdownEdit (rendered by default, click to edit). The
- * action bar mirrors the inbox reader for consistency: state-change on the
- * left, archive / delete / Open-in-chat / close on the right.
+ * Centered modal for task details, raw YAML/body editing, and card agent runs.
+ * Open in chat remains a separate operation from assigning an agent.
  */
 export function TaskModal({
 	task,
@@ -30,6 +30,8 @@ export function TaskModal({
 	onDelete,
 	onArchive,
 	onOpenInChat,
+	onAssign,
+	onCancel,
 }: Props) {
 	const open = task !== null;
 
@@ -38,13 +40,27 @@ export function TaskModal({
 	const [title, setTitle] = useState("");
 	const [stateId, setStateId] = useState("");
 	const [cwd, setCwd] = useState("");
+	const [body, setBody] = useState("");
+	const [rawEditing, setRawEditing] = useState(false);
+	const [runPending, setRunPending] = useState(false);
+	const [runError, setRunError] = useState<string>();
 
 	useEffect(() => {
-		if (!task) return;
-		setTitle(task.title);
-		setStateId(task.stateId);
-		setCwd(task.cwd ?? "");
-	}, [task]);
+		setTitle(task?.title ?? "");
+	}, [task?.id, task?.title]);
+	useEffect(() => {
+		setStateId(task?.stateId ?? "");
+	}, [task?.id, task?.stateId]);
+	useEffect(() => {
+		setCwd(task?.cwd ?? "");
+	}, [task?.id, task?.cwd]);
+	useEffect(() => {
+		setBody(task?.body ?? "");
+	}, [task?.id, task?.body]);
+	useEffect(() => {
+		setRawEditing(false);
+		setRunError(undefined);
+	}, [task?.id]);
 
 	if (!task) return null;
 
@@ -65,6 +81,20 @@ export function TaskModal({
 	}
 
 	const isArchived = Boolean(task.archivedAt);
+	const runActive = task.run?.status === "queued" || task.run?.status === "running";
+
+	async function runAction(action: () => Promise<void>): Promise<void> {
+		if (runPending) return;
+		setRunPending(true);
+		setRunError(undefined);
+		try {
+			await action();
+		} catch (e) {
+			setRunError(String(e));
+		} finally {
+			setRunPending(false);
+		}
+	}
 
 	return (
 		<Modal open={open} onClose={onClose} widthClass="max-w-3xl">
@@ -132,7 +162,7 @@ export function TaskModal({
 							value={cwd}
 							onChange={(e) => setCwd(e.target.value)}
 							onBlur={commitCwd}
-							placeholder="(defaults to server cwd)"
+							placeholder="Unassigned"
 							className="w-full bg-transparent font-mono text-2xs text-ink placeholder:text-ink-4 focus:outline-none"
 						/>
 					</span>
@@ -146,11 +176,90 @@ export function TaskModal({
 			</div>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-				<MarkdownEdit
-					value={task.body}
-					onChange={(next) => onSave({ body: next })}
-					placeholder="Click to add notes — markdown supported. Use this for context, acceptance criteria, links."
-				/>
+				<section className="mb-5 border-b border-line pb-4" aria-label="Card agent">
+					<div className="flex items-center justify-between gap-2">
+						<span className="font-mono text-xs text-ink-3">
+							Agent · {task.run?.status ?? "Not assigned"}
+						</span>
+						{runActive ? (
+							<button
+								type="button"
+								disabled={runPending}
+								onClick={() => void runAction(onCancel)}
+								className="btn-ghost h-8 px-2.5 text-sm"
+							>
+								{runPending ? "Cancelling…" : "Cancel agent"}
+							</button>
+						) : (
+							<button
+								type="button"
+								disabled={runPending || !title.trim()}
+								onClick={() => void runAction(() => onAssign({
+									title,
+									body,
+									stateId,
+									cwd: cwd.trim() || null,
+								}))}
+								className="btn-primary h-8 px-2.5 text-sm"
+							>
+								{runPending ? "Assigning…" : "Assign agent"}
+							</button>
+						)}
+					</div>
+					{task.run?.cwd ? (
+						<p className="mt-2 break-all font-mono text-2xs text-ink-3">
+							Run directory · {task.run.cwd}{task.run.ownedWorktree ? " · owned worktree" : ""}
+						</p>
+					) : null}
+					{task.run?.outcome ? (
+						<div className="mt-3">
+							<div className="font-mono text-2xs text-ink-4">Outcome</div>
+							<p className="mt-1 whitespace-pre-wrap break-words text-sm text-ink">{task.run.outcome}</p>
+						</div>
+					) : null}
+					{task.run?.error ? (
+						<p className="mt-3 whitespace-pre-wrap break-words text-sm text-danger">{task.run.error}</p>
+					) : null}
+					{runError ? <p role="alert" className="mt-3 text-sm text-danger">{runError}</p> : null}
+				</section>
+				<div className="mb-3 flex items-center justify-between gap-2">
+					<span className="font-mono text-2xs text-ink-3">Body / YAML properties</span>
+					<button
+						type="button"
+						onClick={() => setRawEditing((current) => !current)}
+						className="btn-ghost h-7 px-2 text-xs"
+					>
+						{rawEditing ? "Preview" : "Edit raw YAML & body"}
+					</button>
+				</div>
+				{rawEditing ? (
+					<>
+						<textarea
+							aria-label="Raw YAML and task body"
+							rows={14}
+							value={body}
+							onChange={(e) => setBody(e.target.value)}
+							className="field w-full resize-y p-3 font-mono text-xs"
+							placeholder={"---\nread-only: true\nworktree: /absolute/path/to/existing-worktree\nmodel: provider/id\nrole: default\n---\nTask instructions"}
+						/>
+						<button
+							type="button"
+							onClick={() => onSave({ body })}
+							className="btn-primary mt-2 h-8 px-2.5 text-sm"
+						>
+							Save body
+						</button>
+					</>
+				) : (
+					<MarkdownEdit
+						value={body}
+						onChange={(next) => {
+							setBody(next);
+							onSave({ body: next });
+						}}
+						placeholder="Click to add notes — markdown supported. Edit raw YAML & body to set properties."
+					/>
+				)}
 			</div>
 		</Modal>
 	);

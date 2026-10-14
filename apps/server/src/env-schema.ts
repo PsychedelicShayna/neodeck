@@ -96,6 +96,22 @@ export const ENV_SCHEMA: EnvSchemaEntry[] = [
 		description: "Milliseconds before unsubscribed idle sessions are reaped. 0 disables reaping.",
 	},
 	{
+		key: "NPI_DECK_CARD_AGENT_CONCURRENCY", defaultValue: "12", valueType: "int",
+		sensitive: false, restartRequired: true, hotApply: false,
+		description: "Global concurrent card agents. Extra assignments queue; no hard upper cap.",
+		validate: value => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? undefined : "Expected a positive safe integer",
+	},
+	...[
+		["NPI_DECK_CARD_AGENT_MODEL", "Default card model selector; overrides the deck default when set."],
+		["NPI_DECK_CARD_AGENT_ROLE", "Default card model role; per-card model/role overrides take precedence."],
+		["NPI_DECK_CARD_AGENT_ACTIVE_STATE", "Column id entered when a card run starts."],
+		["NPI_DECK_CARD_AGENT_DONE_STATE", "Done/review column id entered on successful completion."],
+		["NPI_DECK_CARD_AGENT_FAILURE_STATE", "Column id entered on failed or cancelled card runs."],
+	].map(([key, description]) => ({
+		key: key!, description: description!, valueType: "string" as const,
+		sensitive: false, restartRequired: true, hotApply: false,
+	})),
+	{
 		key: "NPI_DECK_WEB_DIST",
 		valueType: "path",
 		sensitive: false,

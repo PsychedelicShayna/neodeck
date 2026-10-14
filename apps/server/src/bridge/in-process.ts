@@ -60,26 +60,10 @@ import type {
 	SessionHandle,
 	SlashDispatchResult,
 } from "./types.ts";
+import { kbTools } from "../kb-workflows.ts";
 
 const log = logger("bridge:in-process");
-const DEFAULT_MODEL_CANDIDATES = [
-	{ provider: "anthropic", id: "claude-opus-5-5" },
-	{ provider: "github-copilot", id: "claude-opus-5.5" },
-	{ provider: "openrouter", id: "anthropic/claude-opus-5.5" },
-] as const;
-const FALLBACK_MODEL_CANDIDATES = [
-	{ provider: "openai-codex", id: "gpt-6-sol" },
-	{ provider: "github-copilot", id: "gpt-6-sol" },
-	{ provider: "openrouter", id: "openai/gpt-6-sol" },
-] as const;
-
-function firstAuthenticatedModel(registry: ModelRegistry, candidates: readonly ModelRef[]) {
-	for (const { provider, id } of candidates) {
-		const model = registry.find(provider, id);
-		if (model && registry.hasConfiguredAuth(model)) return model;
-	}
-	return undefined;
-}
+import { DEFAULT_MODEL_CANDIDATES, FALLBACK_MODEL_CANDIDATES, firstAuthenticatedModel } from "../deck-model-defaults.ts";
 
 type DiscoveredAdvisors = Awaited<ReturnType<ReturnType<typeof feature<"advisors">>["discoverAdvisorConfigs"]>>;
 
@@ -398,6 +382,7 @@ export class InProcessAgentBridge implements AgentBridge {
 			sessionManager,
 			modelRegistry,
 			settings,
+			customTools: kbTools(() => ({ agentId: sessionId, projectCwd: sessionManager.getCwd?.() ?? cwd, readOnly: false })),
 			authStorage: modelRegistry.authStorage,
 			// Skip eval-tool Python warmup on session create. On Windows this otherwise
 			// flashes a python.exe console window each turn-zero; on demand spawn is fine.
@@ -1388,7 +1373,7 @@ export class InProcessSessionHandle implements SessionHandle {
 		let result: import("../deck-slash-commands.ts").DeckSlashResult | "fallthrough";
 		try {
 			const { executeDeckSlashCommand } = await import("../deck-slash-commands.ts");
-			result = await executeDeckSlashCommand(text, { cwd: this.cwd });
+			result = await executeDeckSlashCommand(text, { cwd: this.mixtureCwd(), sessionId: this.sessionId });
 		} catch (err) {
 			const message = `Slash command error: ${String((err as Error).message ?? err)}`;
 			log.warn(`deck slash dispatch threw for ${text.slice(0, 40)}: ${String(err)}`);
@@ -1396,6 +1381,7 @@ export class InProcessSessionHandle implements SessionHandle {
 			return { kind: "consumed", output: message };
 		}
 		if (result === "fallthrough") return { kind: "fallthrough" };
+		if (result.kind === "rewritten") return result;
 		this.emitSyntheticSlashRoundTrip(text, result.output || "Done.");
 		return { kind: "consumed", output: result.output || "Done." };
 	}
