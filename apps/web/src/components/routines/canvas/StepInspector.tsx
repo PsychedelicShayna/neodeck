@@ -21,7 +21,7 @@ import type { RoutineStep, RoutineStepRun, RoutineStepStatus } from "@npi-deck/p
 import { cn } from "@/lib/utils";
 
 import { StepCommonFields } from "../StepCommonFields";
-import { STEP_TYPE_BG, renderStepForm } from "../step-form-render";
+import { actionLabel, STEP_TYPE_BG, renderStepForm } from "../step-form-render";
 
 interface StepInspectorProps {
 	/** Currently-selected step, or `null` when nothing is selected. */
@@ -59,6 +59,8 @@ interface StepInspectorProps {
 	routineId?: string;
 	/** Selected run id, only used to build the "Open in Run Detail" deep link. */
 	selectedRunId?: string | null;
+	advanced?: boolean;
+	allowDelete?: boolean;
 }
 
 export function StepInspector({
@@ -72,6 +74,8 @@ export function StepInspector({
 	stepRun,
 	routineId,
 	selectedRunId,
+	advanced = false,
+	allowDelete = true,
 }: StepInspectorProps): JSX.Element | null {
 	// Esc closes the inspector. Bound at the document level so the canvas
 	// keyboard layer doesn't need to know about it.
@@ -91,7 +95,7 @@ export function StepInspector({
 		<aside
 			data-testid="step-inspector"
 			data-mode={mode}
-			aria-label={`${step.type} ${step.id} inspector`}
+			aria-label={`${actionLabel(step)} inspector`}
 			className={
 				mode === "inline"
 					? "pointer-events-auto flex h-full w-[360px] flex-col border-l border-line bg-paper"
@@ -102,21 +106,21 @@ export function StepInspector({
 				<span
 					className={`rounded px-1.5 py-0.5 font-mono text-2xs uppercase tracking-meta ${STEP_TYPE_BG[step.type]}`}
 				>
-					{step.type}
+					{actionLabel(step)}
 				</span>
-				<span className="truncate font-mono text-2xs text-ink-2">
-					{step.id || "(no id)"}
-				</span>
+				{advanced ? <span className="truncate font-mono text-2xs text-ink-2">{step.id}</span> : null}
 				<div className="ml-auto flex items-center gap-0.5">
+					{allowDelete ? (
 					<button
 						type="button"
 						onClick={onDelete}
 						className="btn-ghost h-7 w-7 p-0 text-ink-4 hover:text-danger"
-						aria-label="Delete step"
-						title="Delete step"
+						aria-label="Delete action"
+						title="Delete action"
 					>
 						<Trash2 className="h-3.5 w-3.5" />
 					</button>
+					) : null}
 					<button
 						type="button"
 						onClick={onClose}
@@ -129,15 +133,11 @@ export function StepInspector({
 				</div>
 			</header>
 			<div className="flex-1 space-y-2 overflow-y-auto p-2.5">
-				<StepCommonFields
-					step={step}
-					onChange={onChange}
-					existingIds={idsExcludingSelf}
-				/>
-				{isIfNode && step.type === "transform" ? (
+				{advanced ? <StepCommonFields step={step} onChange={onChange} existingIds={idsExcludingSelf} /> : null}
+				{advanced && isIfNode && step.type === "transform" ? (
 					<BranchConditionForm step={step} onChange={onChange} />
 				) : (
-					renderStepForm(step, onChange)
+					renderStepForm(step, onChange, advanced)
 				)}
 				{stepRun ? (
 					<LastRunSection

@@ -70,6 +70,38 @@ export function TextArea({
 	);
 }
 
+/** Expressions and card frontmatter belong to deliberate advanced editing. */
+export function hasAdvancedContent(value: string): boolean {
+	return value.includes("{{") || /^---\r?\n/.test(value);
+}
+
+/** Never replace a stored expression with a basic-mode placeholder value. */
+export function ActionTextField({
+	label, value, onChange, advanced, placeholder, rows, mono,
+}: {
+	label: string;
+	value: string;
+	onChange: (next: string) => void;
+	advanced: boolean;
+	placeholder?: string;
+	rows?: number;
+	mono?: boolean;
+}) {
+	return (
+		<Field label={label}>
+			{!advanced && hasAdvancedContent(value) ? (
+				<p className="text-2xs text-ink-3">
+					This field uses advanced content. Turn on Advanced to edit it.
+				</p>
+			) : rows !== undefined ? (
+				<TextArea value={value} onChange={onChange} placeholder={placeholder} rows={rows} mono={mono} />
+			) : (
+				<TextInput value={value} onChange={onChange} placeholder={placeholder} mono={mono} />
+			)}
+		</Field>
+	);
+}
+
 export function NumInput({
 	value,
 	onChange,

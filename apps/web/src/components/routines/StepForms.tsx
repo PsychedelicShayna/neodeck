@@ -6,30 +6,135 @@
  */
 import { Link } from "react-router-dom";
 import type { RoutineStep } from "@npi-deck/protocol";
+import { useState, type ReactNode } from "react";
 
-import { Field, KeyValueEditor, NumInput, TagInput, TextArea, TextInput } from "./form-primitives";
+import { ActionTextField, Field, hasAdvancedContent, KeyValueEditor, NumInput, TagInput, TextArea, TextInput } from "./form-primitives";
+import { cardBodyParts, cardPropertyDocument, setCardBodyContent, setCardBodyProperty } from "./spec-yaml";
 
 type Extract2<T extends RoutineStep["type"]> = Extract<RoutineStep, { type: T }>;
 
 interface FormProps<T extends RoutineStep["type"]> {
 	step: Extract2<T>;
 	onChange: (next: Extract2<T>) => void;
+	advanced?: boolean;
+}
+
+function CardBodyProperties({ body, onChange, advanced, children }: {
+	body: string;
+	onChange: (body: string) => void;
+	advanced: boolean;
+	children?: ReactNode;
+}) {
+	const [propertyName, setPropertyName] = useState("");
+	const [propertyValue, setPropertyValue] = useState("");
+	let parsed: ReturnType<typeof cardPropertyDocument>;
+	try {
+		parsed = cardPropertyDocument(body);
+	} catch {
+		return <details>
+			<summary className="cursor-pointer text-2xs text-ink-2">Card properties</summary>
+			<p className="text-2xs text-ink-3">Turn on Advanced to correct the existing frontmatter in the body editor.</p>
+			{children}
+		</details>;
+	}
+	const readOnly = parsed.document.get("read-only");
+	const worktree = parsed.document.get("worktree");
+	const properties: Record<string, string> = Object.fromEntries(
+		Object.entries((parsed.document.toJSON() ?? {}) as Record<string, unknown>)
+			.filter(([key, value]) => key !== "read-only" && key !== "worktree"
+				&& (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+				&& !hasAdvancedContent(key) && !hasAdvancedContent(String(value)))
+			.map(([key, value]) => [key, String(value)]),
+	);
+	const hiddenProperties = Object.keys(parsed.document.toJSON() ?? {})
+		.some((key) => key !== "read-only" && key !== "worktree" && !(key in properties));
+	const newPropertyName = propertyName.trim();
+	const canAddProperty = newPropertyName !== "" && newPropertyName !== "read-only"
+		&& newPropertyName !== "worktree" && !parsed.document.has(newPropertyName)
+		&& !hasAdvancedContent(newPropertyName) && !hasAdvancedContent(propertyValue);
+	return (
+		<details className="space-y-2">
+			<summary className="cursor-pointer text-2xs text-ink-2">Card properties</summary>
+			{readOnly === undefined || typeof readOnly === "boolean" ? (
+				<label className="flex items-center gap-2 text-2xs text-ink-2">
+					<input type="checkbox" checked={readOnly === true}
+						onChange={(e) => onChange(setCardBodyProperty(body, "read-only", e.target.checked))} />
+					Read-only research
+				</label>
+			) : <p className="text-2xs text-ink-3">Edit the existing read-only value in Other properties.</p>}
+			{worktree === undefined || typeof worktree === "string" ? (
+				<Field label="Linked worktree (optional)">
+					{!advanced && typeof worktree === "string" && hasAdvancedContent(worktree) ? (
+						<p className="text-2xs text-ink-3">Turn on Advanced to edit the existing worktree expression.</p>
+					) : <TextInput value={worktree ?? ""} placeholder="Absolute worktree directory"
+						onChange={(v) => onChange(setCardBodyProperty(body, "worktree", v === "" ? undefined : v))} />}
+				</Field>
+			) : <p className="text-2xs text-ink-3">Edit the existing worktree value in Other properties.</p>}
+			{children}
+			{Object.entries(properties).map(([key, value]) => (
+				<Field key={key} label={key}>
+					<div className="flex items-center gap-1">
+						<TextInput value={value} onChange={(next) => onChange(setCardBodyProperty(body, key, next))} />
+						<button type="button" className="btn-ghost text-2xs" aria-label={`Remove property ${key}`}
+							onClick={() => onChange(setCardBodyProperty(body, key, undefined))}>×</button>
+					</div>
+				</Field>
+			))}
+			<Field label="Other properties">
+				<TextInput value={propertyName} onChange={setPropertyName} placeholder="Property name" />
+				<TextInput value={propertyValue} onChange={setPropertyValue} placeholder="Property value" />
+				<button type="button" className="btn-ghost text-2xs" disabled={!canAddProperty}
+					onClick={() => {
+						onChange(setCardBodyProperty(body, newPropertyName, propertyValue));
+						setPropertyName("");
+						setPropertyValue("");
+					}}>Add property</button>
+			</Field>
+			{!advanced && hiddenProperties ? <p className="text-2xs text-ink-3">
+				Other existing properties use advanced content. Turn on Advanced to edit them.
+			</p> : null}
+			{advanced ? <Field label="Other properties (YAML)">
+				<TextArea value={parsed.header} rows={4}
+					onChange={(header) => onChange(header === "" ? parsed.content : `---\n${header.endsWith("\n") ? header : `${header}\n`}---\n${parsed.content}`)} />
+			</Field> : null}
+		</details>
+	);
+}
+
+function CardBodyField({ label, body, onChange, advanced, rows, placeholder }: {
+	label: string;
+	body: string;
+	onChange: (body: string) => void;
+	advanced: boolean;
+	rows: number;
+	placeholder: string;
+}) {
+	let value = body;
+	if (!advanced) {
+		try {
+			value = cardBodyParts(body).content;
+		} catch {
+			return <Field label={label}><p className="text-2xs text-ink-3">Turn on Advanced to edit this body.</p></Field>;
+		}
+	}
+	return <ActionTextField label={label} value={value} advanced={advanced} rows={rows} placeholder={placeholder}
+		onChange={(content) => onChange(advanced ? content : setCardBodyContent(body, content))} />;
 }
 
 // ─── run ──────────────────────────────────────────────────────────────────
 
-export function RunStepForm({ step, onChange }: FormProps<"run">) {
+export function RunStepForm({ step, onChange, advanced = true }: FormProps<"run">) {
 	return (
 		<div className="space-y-2">
-			<Field label="command">
-				<TextArea
-					value={step.command}
-					onChange={(v) => onChange({ ...step, command: v })}
-					rows={2}
-					placeholder="echo hello"
-				/>
-			</Field>
-			<Field label="cwd (optional)">
+			<ActionTextField
+				label="Command"
+				value={step.command}
+				onChange={(v) => onChange({ ...step, command: v })}
+				advanced={advanced}
+				rows={2}
+				placeholder="echo hello"
+			/>
+			{advanced ? <Field label="Working directory (optional)">
 				<TextInput
 					value={step.cwd ?? ""}
 					onChange={(v) => {
@@ -41,7 +146,7 @@ export function RunStepForm({ step, onChange }: FormProps<"run">) {
 					placeholder="C:/path/to/repo"
 					mono
 				/>
-			</Field>
+			</Field> : null}
 		</div>
 	);
 }
@@ -75,7 +180,7 @@ function AllowlistField({ label, allLabel, placeholder, values, onChange }: {
 	);
 }
 
-export function AgentStepForm({ step, onChange }: FormProps<"agent">) {
+export function AgentStepForm({ step, onChange, advanced = true }: FormProps<"agent">) {
 	function patch(p: Partial<Extract2<"agent">>): void {
 		onChange({ ...step, ...p });
 	}
@@ -87,14 +192,15 @@ export function AgentStepForm({ step, onChange }: FormProps<"agent">) {
 	}
 	return (
 		<div className="space-y-2">
-			<Field label="prompt">
-				<TextArea
-					value={step.prompt}
-					onChange={(v) => patch({ prompt: v })}
-					rows={6}
-					placeholder="Summarize {{ steps.fetch_tasks.json }} in 2 sentences."
-				/>
-			</Field>
+			<ActionTextField
+				label="Prompt"
+				value={step.prompt}
+				onChange={(v) => patch({ prompt: v })}
+				advanced={advanced}
+				rows={6}
+				placeholder="Describe what you want the agent to do."
+			/>
+			{advanced ? <>
 			<Field label="model (optional)">
 				<TextInput
 					value={step.model ?? ""}
@@ -124,6 +230,7 @@ export function AgentStepForm({ step, onChange }: FormProps<"agent">) {
 					onChange={(names) => updateAllowlist("mcp_servers_allowed", names)}
 				/>
 			</div>
+			</> : null}
 		</div>
 	);
 }
@@ -290,7 +397,7 @@ function bodyToString(b: unknown): string {
 
 type DeckStep = Extract2<"deck">;
 
-export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
+export function DeckStepForm({ step, onChange, advanced = true }: FormProps<"deck">) {
 	function swapAction(action: DeckStep["action"]): void {
 		const common = {
 			id: step.id,
@@ -306,27 +413,27 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 					...common,
 					action,
 					kind: "capture",
-					title: step.action === action ? step.title : "routine-output-{{ run.date }}",
+					title: step.action === action ? step.title : "Routine capture",
 					body:
 						step.action === action
 							? step.body
 							: step.action === "create_task"
 								? step.body
-								: "{{ steps.X.stdout }}",
-					source: step.action === action ? step.source : "routine:{{ run.id }}",
+								: "",
+					source: step.action === action ? step.source : undefined,
 				});
 				return;
 			case "create_task":
 				onChange({
 					...common,
 					action,
-					title: step.action === action ? step.title : "Follow up on {{ run.date }}",
+					title: step.action === action ? step.title : "Follow up",
 					body:
 						step.action === action
 							? step.body
 							: step.action === "create_inbox_item"
 								? step.body
-								: "{{ steps.X.stdout }}",
+								: "",
 					state_ref: step.action === action ? step.state_ref : undefined,
 					cwd: step.action === action ? step.cwd : undefined,
 				});
@@ -395,7 +502,7 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 
 	return (
 		<div className="space-y-2">
-			<Field label="action">
+			{advanced ? <Field label="action">
 				<select
 					value={step.action}
 					onChange={(e) => swapAction(e.target.value as DeckStep["action"])}
@@ -411,7 +518,7 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 					<option value="get_inbox_item">get_inbox_item</option>
 					<option value="kb_orphan_census">kb_orphan_census</option>
 				</select>
-			</Field>
+			</Field> : null}
 			{step.action === "create_inbox_item" ? (
 				<div className="space-y-2">
 					<Field label="kind">
@@ -428,34 +535,29 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 							<option value="investigation">investigation</option>
 						</select>
 					</Field>
-					<Field label="title">
-						<TextInput value={step.title} onChange={(v) => onChange({ ...step, title: v })} placeholder="Morning briefing - {{ run.date }}" mono />
-					</Field>
-					<Field label="body">
-						<TextArea value={step.body ?? ""} onChange={(v) => onChange({ ...step, body: v === "" ? undefined : v })} rows={5} placeholder="{{ steps.write_briefing.stdout }}" />
-					</Field>
-					<Field label="source (optional)">
+					<ActionTextField label="Title" value={step.title} onChange={(v) => onChange({ ...step, title: v })} advanced={advanced} placeholder="Morning briefing" />
+					<CardBodyField label="Body" body={step.body ?? ""} onChange={(body) => onChange({ ...step, body: body === "" ? undefined : body })} advanced={advanced} rows={5} placeholder="What should be saved in the inbox?" />
+					{advanced ? <Field label="source (optional)">
 						<TextInput value={step.source ?? ""} onChange={(v) => onChange({ ...step, source: v === "" ? undefined : v })} placeholder="routine:daily-briefing" mono />
-					</Field>
+					</Field> : null}
+					<CardBodyProperties body={step.body ?? ""} advanced={advanced} onChange={(body) => onChange({ ...step, body })} />
 				</div>
 			) : null}
 			{step.action === "create_task" ? (
 				<div className="space-y-2">
-					<Field label="title">
-						<TextInput value={step.title} onChange={(v) => onChange({ ...step, title: v })} placeholder="Follow up on {{ run.date }}" mono />
-					</Field>
-					<Field label="body (optional)">
-						<TextArea value={step.body ?? ""} onChange={(v) => onChange({ ...step, body: v === "" ? undefined : v })} rows={4} placeholder="{{ steps.digest.stdout }}" />
-					</Field>
-					<Field label="state_ref (optional)">
+					<ActionTextField label="Title" value={step.title} onChange={(v) => onChange({ ...step, title: v })} advanced={advanced} placeholder="Follow up" />
+					<CardBodyField label="Body (optional)" body={step.body ?? ""} onChange={(body) => onChange({ ...step, body: body === "" ? undefined : body })} advanced={advanced} rows={4} placeholder="Describe the card." />
+					<CardBodyProperties body={step.body ?? ""} advanced={advanced} onChange={(body) => onChange({ ...step, body })}>
+					{advanced ? <><Field label="Column (optional)">
 						<TextInput value={step.state_ref ?? ""} onChange={(v) => onChange({ ...step, state_ref: v === "" ? undefined : v })} placeholder="backlog or s_backlog" mono />
 					</Field>
-					<Field label="cwd (optional)">
+					<Field label="Working directory (optional)">
 						<TextInput value={step.cwd ?? ""} onChange={(v) => onChange({ ...step, cwd: v === "" ? undefined : v })} placeholder="C:/path/to/repo" mono />
-					</Field>
+					</Field></> : null}
+					</CardBodyProperties>
 				</div>
 			) : null}
-			{step.action === "move_task" ? (
+			{advanced && step.action === "move_task" ? (
 				<div className="space-y-2">
 					<Field label="task_ref">
 						<TextInput value={step.task_ref} onChange={(v) => onChange({ ...step, task_ref: v })} placeholder="T-58 or t_01..." mono />
@@ -470,12 +572,15 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 			) : null}
 			{step.action === "promote_inbox_item_to_task" ? (
 				<div className="space-y-2">
+					{advanced ? <>
 					<Field label="inbox_ref">
 						<TextInput value={step.inbox_ref} onChange={(v) => onChange({ ...step, inbox_ref: v })} placeholder="i_..." mono />
 					</Field>
 					<Field label="state_ref (optional)">
 						<TextInput value={step.state_ref ?? ""} onChange={(v) => onChange({ ...step, state_ref: v === "" ? undefined : v })} placeholder="backlog or s_backlog" mono />
 					</Field>
+					</> : <p className="text-2xs text-ink-3">Turn on Advanced to choose the inbox item and destination column.</p>}
+					<p className="text-2xs text-ink-3">Card text and properties are kept from the inbox item. <Link to="/inbox" className="text-accent underline">Edit them in Inbox.</Link></p>
 					<label className="flex items-center gap-2 font-mono text-2xs text-ink-2">
 						<input
 							type="checkbox"
@@ -493,10 +598,10 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 			) : null}
 			{step.action === "list_tasks" ? (
 				<div className="space-y-2">
-					<Field label="state_ref (optional — name like 'active' or id like 's_active')">
+					{advanced ? <Field label="state_ref (optional — name like 'active' or id like 's_active')">
 						<TextInput value={step.state_ref ?? ""} onChange={(v) => onChange({ ...step, state_ref: v === "" ? undefined : v })} placeholder="active" mono />
-					</Field>
-					<Field label="since_hours (optional — only tasks updated in last N hours)">
+					</Field> : null}
+					<Field label="Updated within hours (optional)">
 						<NumInput value={step.since_hours} onChange={(v) => onChange({ ...step, since_hours: v ?? undefined })} placeholder="24" />
 					</Field>
 					<Field label="limit (optional)">
@@ -540,7 +645,7 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 							<option value="investigation">investigation</option>
 						</select>
 					</Field>
-					<Field label="since_hours (optional)">
+					<Field label="Received within hours (optional)">
 						<NumInput value={step.since_hours} onChange={(v) => onChange({ ...step, since_hours: v ?? undefined })} placeholder="24" />
 					</Field>
 					<Field label="limit (optional)">
@@ -561,14 +666,14 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 					</label>
 				</div>
 			) : null}
-			{step.action === "get_task" ? (
+			{advanced && step.action === "get_task" ? (
 				<div className="space-y-2">
 					<Field label="task_ref">
 						<TextInput value={step.task_ref} onChange={(v) => onChange({ ...step, task_ref: v })} placeholder="T-58 or t_01..." mono />
 					</Field>
 				</div>
 			) : null}
-			{step.action === "get_inbox_item" ? (
+			{advanced && step.action === "get_inbox_item" ? (
 				<div className="space-y-2">
 					<Field label="inbox_ref">
 						<TextInput value={step.inbox_ref} onChange={(v) => onChange({ ...step, inbox_ref: v })} placeholder="i_..." mono />
@@ -577,10 +682,13 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 			) : null}
 			{step.action === "kb_orphan_census" ? (
 				<div className="space-y-2">
-					<Field label="limit (optional — orphans listed; orphanCount counts them all)">
+					<Field label="Maximum notes (optional)">
 						<NumInput value={step.limit} onChange={(v) => onChange({ ...step, limit: v ?? undefined })} placeholder="200" />
 					</Field>
 				</div>
+			) : null}
+			{!advanced && ["move_task", "get_task", "get_inbox_item"].includes(step.action) ? (
+				<p className="text-2xs text-ink-3">Turn on Advanced to choose the card, inbox item or destination column.</p>
 			) : null}
 		</div>
 	);
@@ -661,7 +769,7 @@ export function TransformStepForm({ step, onChange }: FormProps<"transform">) {
 
 export function WaitStepForm({ step, onChange }: FormProps<"wait">) {
 	return (
-		<Field label="duration_secs">
+		<Field label="Duration (seconds)">
 			<NumInput
 				value={step.duration_secs}
 				onChange={(v) => onChange({ ...step, duration_secs: v ?? 0 })}

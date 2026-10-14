@@ -14,6 +14,8 @@ import { memo } from "react";
 import type { RoutineStep, RoutineStepRun, RoutineStepStatus } from "@npi-deck/protocol";
 
 import type { StepNode as StepNodeType } from "../graph-types";
+import { actionLabel } from "../../step-form-render";
+import { hasAdvancedContent } from "../../form-primitives";
 
 /**
  * Type → background-tint class. Same palette as `StepCard.TYPE_BG` so a step
@@ -35,18 +37,23 @@ const TYPE_TINT: Record<RoutineStep["type"], string> = {
  * One-line summary of the step's most distinctive field. Empty string when the
  * step has no useful surface text yet (renderer omits the line in that case).
  */
-function summarize(step: RoutineStep): string {
+function summarize(step: RoutineStep, advanced: boolean): string {
+	if (!advanced && ["write", "http", "mcp", "transform", "set_state"].includes(step.type)) {
+		return "Advanced action settings";
+	}
 	switch (step.type) {
 		case "agent":
-			return step.prompt?.slice(0, 80) ?? "";
+			return !advanced && hasAdvancedContent(step.prompt) ? "Advanced prompt" : step.prompt.slice(0, 80);
 		case "http":
 			return `${step.method} ${step.url}`;
 		case "write":
 			return step.path;
 		case "run":
-			return step.command ?? "";
+			return !advanced && hasAdvancedContent(step.command) ? "Advanced command" : step.command;
 		case "deck":
-			return step.action;
+			return "title" in step
+				? !advanced && hasAdvancedContent(step.title) ? "Advanced title" : step.title
+				: actionLabel(step);
 		case "mcp":
 			return `${step.server}.${step.tool}`;
 		case "transform":
@@ -64,8 +71,8 @@ export const StepNode = memo(function StepNode({
 	data,
 	selected,
 }: NodeProps<StepNodeType>) {
-	const { step, compileError, isIfNode, stepRun } = data;
-	const summary = summarize(step);
+	const { step, compileError, isIfNode, stepRun, advanced } = data;
+	const summary = summarize(step, advanced === true);
 	const tint = TYPE_TINT[step.type] ?? "bg-paper-2 border-line";
 
 	// Visual priority for the outer ring:
@@ -100,7 +107,7 @@ export const StepNode = memo(function StepNode({
 			/>
 			<div className="flex items-center gap-2 border-b border-line/60 px-2 py-1">
 				<span className="font-mono text-2xs uppercase tracking-meta text-ink-3">
-					{step.type}
+					{actionLabel(step)}
 				</span>
 				{compileError ? (
 					<span
@@ -111,7 +118,7 @@ export const StepNode = memo(function StepNode({
 					</span>
 				) : null}
 				{stepRun && !compileError ? <StatusBadge run={stepRun} /> : null}
-				<span className="ml-auto font-mono text-2xs text-ink-2">{step.id}</span>
+				{advanced ? <span className="ml-auto font-mono text-2xs text-ink-2">{step.id}</span> : null}
 			</div>
 			{summary ? (
 				<div className="px-2 py-1.5 font-mono text-2xs leading-snug text-ink-2 line-clamp-2">
@@ -122,7 +129,7 @@ export const StepNode = memo(function StepNode({
 					(empty)
 				</div>
 			)}
-			{step.when ? (
+			{advanced && step.when ? (
 				<div
 					className="border-t border-line/60 px-2 py-1 font-mono text-2xs text-ink-3"
 					title={step.when}
@@ -143,10 +150,10 @@ export const StepNode = memo(function StepNode({
 					    consumed by `handleConnect` so a drag from this handle persists
 					    the right edge kind. Placed at 30%/70% horizontal so they read
 					    left-to-right as truthy → falsy. */}
-					<div className="flex border-t border-line/60 bg-paper-3/40 px-2 py-1 font-mono text-2xs text-ink-3">
+					{advanced ? <div className="flex border-t border-line/60 bg-paper-3/40 px-2 py-1 font-mono text-2xs text-ink-3">
 						<span className="flex-1 text-success">true →</span>
 						<span className="flex-1 text-right text-danger">→ false</span>
-					</div>
+					</div> : null}
 					<Handle
 						id="true"
 						type="source"

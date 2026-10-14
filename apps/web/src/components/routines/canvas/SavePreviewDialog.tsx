@@ -1,27 +1,4 @@
-/**
- * T-70: pre-save diff preview for canvas-mode routines.
- *
- * Branch compilation (T-69) silently rewrites downstream `when:` clauses based
- * on the canvas graph. That's the right behavior, but it should never be a
- * surprise — the user should see exactly the YAML that's about to be persisted
- * before it lands.
- *
- * Rendering:
- * - Each line of the compiled YAML is shown with a leading "+" / "-" / " "
- *   gutter and a corresponding tint (green / red / neutral).
- * - Lines are presented in the conventional unified-diff order (delete then
- *   add for a replacement). See `yaml-diff.ts`.
- *
- * Buttons:
- * - "Save" commits via the supplied `onConfirm` callback.
- * - "Edit canvas" closes the dialog without saving (`onCancel`).
- *
- * Opt-out:
- * - The parent (RoutineBuilder) checks `import.meta.env.NPI_DECK_CANVAS_SKIP_PREVIEW`
- *   AND `localStorage["npi-deck:canvas-skip-preview"]`. When either is "1",
- *   the dialog is bypassed entirely and save commits directly. This component
- *   doesn't read those settings itself — the policy lives in the caller.
- */
+/** Optional source-change review, shown only while deliberately editing source. */
 
 import { useEffect, useMemo, useRef } from "react";
 import { Save, X } from "lucide-react";
@@ -81,7 +58,7 @@ export function SavePreviewDialog({
 			<div className="flex max-h-[90vh] w-[min(820px,100%)] flex-col overflow-hidden rounded-lg border border-line bg-paper shadow-xl">
 				<header className="flex items-center gap-2 border-b border-line bg-paper-2/60 px-3 py-2">
 					<span className="font-mono text-2xs uppercase tracking-meta text-ink-3">
-						Save preview
+						Source changes
 					</span>
 					<span className="font-mono text-2xs text-ink-3">
 						{clean ? (
@@ -125,7 +102,7 @@ export function SavePreviewDialog({
 
 				<footer className="flex items-center gap-2 border-t border-line bg-paper-2/60 px-3 py-2">
 					<span className="font-mono text-2xs text-ink-3">
-						Reviewing the YAML the canvas will commit.
+						Review source changes before saving.
 					</span>
 					<div className="ml-auto flex items-center gap-1.5">
 						<button

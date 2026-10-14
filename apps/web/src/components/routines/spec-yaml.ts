@@ -5,11 +5,10 @@
  * Spec tab: form edits mutate a `RoutineSpec` object, which gets serialized
  * to YAML on save; valid YAML edits parse back into a `RoutineSpec`.
  *
- * We use the `yaml` package's plain parse/stringify (not the Document API)
- * because comments aren't a V1 promise — V2 visual mode can preserve them
- * when we have a reason to.
+ * Routine specs use plain parse/stringify. Card body property edits use the
+ * Document API so unrelated frontmatter and comments remain intact.
  */
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { isMap, isScalar, parse as parseYaml, parseDocument, stringify as stringifyYaml } from "yaml";
 
 import {
 	validateRoutineSpec,
@@ -21,6 +20,49 @@ import {
 	type RoutineTrigger,
 	type ValidationError,
 } from "@npi-deck/protocol";
+
+/** Card properties remain body text; these helpers do not add runtime semantics. */
+export function cardBodyParts(body: string): { header: string; content: string } {
+	if (!body.startsWith("---\n") && !body.startsWith("---\r\n")) {
+		return { header: "", content: body };
+	}
+	const match = /^---\r?\n([\s\S]*?)^---(?:\r?\n|$)/m.exec(body);
+	if (!match || match.index !== 0) throw new Error("The card frontmatter has no closing delimiter.");
+	return { header: match[1]!, content: body.slice(match[0].length) };
+}
+
+export function cardPropertyDocument(body: string) {
+	const parts = cardBodyParts(body);
+	const document = parseDocument(parts.header);
+	if (document.errors.length > 0 || (document.contents !== null && !isMap(document.contents))) {
+		throw new Error("The card frontmatter must be a valid property mapping.");
+	}
+	return { ...parts, document };
+}
+
+export function setCardBodyContent(body: string, content: string): string {
+	const previous = cardBodyParts(body).content;
+	return body.slice(0, body.length - previous.length) + content;
+}
+
+export function setCardBodyProperty(body: string, key: string, value: string | boolean | undefined): string {
+	const { header, content, document } = cardPropertyDocument(body);
+	if (document.get(key) === value) return body;
+	if (isMap(document.contents) && !document.contents.flow) {
+		const pair = document.contents.items.find((item) => isScalar(item.key) && item.key.value === key);
+		const start = isScalar(pair?.key) ? pair.key.range?.[0] : undefined;
+		const end = pair?.value && "range" in pair.value ? pair.value.range?.[2] : undefined;
+		const replacement = value === undefined ? "" : stringifyYaml({ [key]: value });
+		if (start !== undefined && end !== undefined) {
+			return `---\n${header.slice(0, start)}${replacement}${header.slice(end)}---\n${content}`;
+		}
+		if (!pair) return `---\n${header}${header && !header.endsWith("\n") ? "\n" : ""}${replacement}---\n${content}`;
+	}
+	// Flow mappings or valueless entries need structural editing to stay valid.
+	if (value === undefined) document.delete(key);
+	else document.set(key, value);
+	return `---\n${document.toString({ lineWidth: 0 })}---\n${content}`;
+}
 
 export interface ParseResult {
 	ok: boolean;
@@ -137,7 +179,7 @@ export function scaffoldStep(
 		case "run":
 			return { id, type: "run", command: "echo hello" };
 		case "agent":
-			return { id, type: "agent", prompt: "Summarize the following:\n\n{{ steps.X.json }}" };
+			return { id, type: "agent", prompt: "" };
 		case "write":
 			return {
 				id,
@@ -155,17 +197,16 @@ export function scaffoldStep(
 						type: "deck",
 						action: "create_inbox_item",
 						kind: "capture",
-						title: "routine-output-{{ run.date }}",
-						body: "{{ steps.X.stdout }}",
-						source: "routine:{{ run.id }}",
+						title: "Routine capture",
+						body: "",
 					};
 				case "create_task":
 					return {
 						id,
 						type: "deck",
 						action: "create_task",
-						title: "Follow up on {{ run.date }}",
-						body: "{{ steps.X.stdout }}",
+						title: "Follow up",
+						body: "",
 					};
 				case "move_task":
 					return {

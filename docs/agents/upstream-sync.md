@@ -91,10 +91,19 @@ behavior using a separate service instance/port and temporary state. Follow
 `docs/install.md` for isolated setup; do not touch `~/.npi-deck`, the live
 snapshot `~/.local/share/npi-deck`, or the live `npi-deck.service`. Never stop,
 restart, reload, or reprovision that service. Do not mutate the live desktop,
-windows, workspaces, tmux, desktop entries, or XDG configuration. All GUI,
-Electron, browser, and auto-open verification must use `xvfb-run -a <cmd>` with
-a timeout, never display `:0` or Xephyr. Terminate the entire process tree,
-including Xvfb, and verify termination with `pgrep`; if Xvfb cannot perform a
+windows, workspaces, tmux, desktop entries, or XDG configuration. Auto-open and
+other non-browser GUI commands must use `timeout` + `xvfb-run -a <cmd>` with
+private HOME/XDG state and no inherited live D-Bus or desktop/session variables.
+Direct Chromium/Electron launches must use only
+`bun scripts/browser-smoke.ts --home <private-tmp-dir> --timeout <seconds> -- <absolute-browser> --user-data-dir=<private-profile>`.
+The wrapper already invokes `timeout` + `xvfb-run -a` with mandatory
+`--password-store=basic`; it does not inherit `DBUS_SESSION_BUS_ADDRESS`,
+`XDG_CURRENT_DESKTOP`, `XDG_SESSION_DESKTOP`, `DESKTOP_SESSION`, or live display,
+Wayland and credential variables. HOME and XDG paths are private. Follow the
+invocation and actual-child argv/environment checks in `CONTRIBUTING.md`.
+Never use display `:0` or Xephyr. Terminate the entire process tree, including
+detached crash handlers and Xvfb, and verify termination with `pgrep` matching
+the private profile, debugging port and Xvfb display. If Xvfb cannot perform a
 check, report the limitation without a fallback.
 
 Record exact commands, pass/failure evidence, build and smoke results, and

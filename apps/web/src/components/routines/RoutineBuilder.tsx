@@ -1,11 +1,4 @@
-/**
- * V1 routine builder. Form-mode visual editor over a `RoutineSpec`, with a
- * Spec tab that surfaces the underlying YAML for round-tripping. The two views
- * share the same backing model: form edits update `spec`, which serializes to
- * `yamlBuffer`; valid YAML edits parse back into `spec`.
- *
- * Invalid YAML disables form view with an inline parse-error explanation.
- */
+/** Canvas-first authoring with deliberate advanced controls and source access. */
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -63,19 +56,19 @@ interface Props {
 
 type Tab = "steps" | "canvas" | "triggers" | "settings" | "spec";
 
-/**
- * Initial tab to land on when (re)opening the editor:
- * - Brand-new routine, or routine with a saved `layout` block -> Canvas.
- * - Existing routine without a layout -> Steps (form mode, preserving prior UX).
- */
-function pickInitialTab(routine: Routine | undefined, spec: RoutineSpec): Tab {
-	if (!routine) return "canvas";
-	if (spec.layout) return "canvas";
-	return "steps";
-}
-
 export function RoutineBuilder({ routine, onSaved, onError }: Props) {
+	const legacy = routine !== undefined && routine.specVersion !== 1;
 	const initialSpec = useMemo<RoutineSpec>(() => {
+		if (routine && routine.specVersion !== 1) {
+			return {
+				name: routine.name,
+				description: routine.description,
+				trigger: routine.cron ? [{ cron: routine.cron }] : [{ manual: {} }],
+				steps: [routine.actionKind === "prompt"
+					? { id: "action", type: "agent", prompt: routine.actionBody }
+					: { id: "action", type: "run", command: routine.actionBody, cwd: routine.actionCwd }],
+			};
+		}
 		if (routine?.specYaml) {
 			const parsed = parseSpec(routine.specYaml);
 			if (parsed.ok && parsed.spec) return parsed.spec;
@@ -97,6 +90,7 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 	}
 
 	const [spec, setSpec] = useState<RoutineSpec>(initialSpec);
+	const persistedSpec = useRef(initialSpec);
 	const [stepKeys, setStepKeys] = useState<string[]>(() => makeStepKeys(initialSpec.steps.length));
 	const [yamlBuffer, setYamlBuffer] = useState<string>(() =>
 		routine?.specYaml ?? stringifySpec(initialSpec),
@@ -104,7 +98,10 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 	const [yamlDirty, setYamlDirty] = useState(false);
 	const [yamlError, setYamlError] = useState<string | undefined>();
 	const [schemaErrors, setSchemaErrors] = useState<ValidationError[] | undefined>();
-	const [tab, setTab] = useState<Tab>(() => pickInitialTab(routine, initialSpec));
+	const [tab, setTab] = useState<Tab>("canvas");
+	const [advanced, setAdvanced] = useState(false);
+	const [legacyCwd, setLegacyCwd] = useState(routine?.actionCwd ?? "");
+	const [legacyKind, setLegacyKind] = useState(routine?.actionKind ?? "bash");
 	const [busy, setBusy] = useState(false);
 	const [enabled, setEnabled] = useState<boolean>(routine?.enabled ?? false);
 	const [runs, setRuns] = useState<RoutineRun[]>([]);
@@ -124,12 +121,16 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 		lastRoutineId.current = routine?.id;
 		setStepKeys(makeStepKeys(initialSpec.steps.length));
 		setSpec(initialSpec);
+		persistedSpec.current = initialSpec;
 		setYamlBuffer(routine?.specYaml ?? stringifySpec(initialSpec));
 		setYamlDirty(false);
 		setYamlError(undefined);
 		setSchemaErrors(undefined);
 		setEnabled(routine?.enabled ?? false);
-		setTab(pickInitialTab(routine, initialSpec));
+		setTab("canvas");
+		setAdvanced(false);
+		setLegacyCwd(routine?.actionCwd ?? "");
+		setLegacyKind(routine?.actionKind ?? "bash");
 	}, [routine, initialSpec]);
 
 	useEffect(() => {
@@ -151,14 +152,14 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 	}
 	// YAML -> form sync (debounced via blur; the textarea-onChange just tracks
 	// the buffer; we re-parse when the user clicks "Apply" or switches tab).
-	function applyYaml(): boolean {
+	function applyYaml(): RoutineSpec | undefined {
 		const result = parseSpec(yamlBuffer);
 		if (!result.ok) {
 			if (result.yamlError) setYamlError(`${result.yamlError.message}${result.yamlError.line ? ` (line ${result.yamlError.line})` : ""}`);
 			else setYamlError(undefined);
 			if (result.schemaErrors) setSchemaErrors(result.schemaErrors);
 			else setSchemaErrors(undefined);
-			return false;
+			return undefined;
 		}
 		const nextSpec = result.spec ?? emptyV1Spec();
 		setStepKeys(makeStepKeys(nextSpec.steps.length));
@@ -166,7 +167,7 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 		setYamlDirty(false);
 		setYamlError(undefined);
 		setSchemaErrors(undefined);
-		return true;
+		return nextSpec;
 	}
 
 	function switchTab(next: Tab): void {
@@ -179,6 +180,15 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 		setTab(next);
 	}
 
+	function toggleAdvanced(): void {
+		if (advanced) {
+			// Invalid source must be fixed before hiding it or changing views.
+			if (tab === "spec" && yamlDirty && !applyYaml()) return;
+			setTab("canvas");
+		}
+		setAdvanced((value) => !value);
+	}
+
 	const specValidation = useMemo(() => validateRoutineSpec(spec), [spec]);
 	const specValidationMessages = useMemo(
 		() => summarizeRoutineValidationErrors(specValidation.errors, spec),
@@ -188,7 +198,7 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 	// path (no `layout.edges`), this is the identity function; it only does work
 	// when the user has wired explicit edges via the canvas. Errors gate Save
 	// and feed the canvas's red-ring overlay + bottom error strip.
-	const compile = useMemo(() => compileGraph(spec), [spec]);
+	const compile = useMemo(() => legacy ? { steps: spec.steps, errors: [] } : compileGraph(spec), [spec, legacy]);
 
 	// T-71: run-status overlay state. Shared between the canvas (ring colors
 	// + badges + last-run picker) and the inspector (per-step output preview
@@ -196,23 +206,27 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 	const runOverlay = useRunOverlay(routine?.id);
 
 	async function save(): Promise<void> {
-		// Make sure YAML changes are applied to the live spec first.
-		if (yamlDirty) {
-			const ok = applyYaml();
-			if (!ok) {
-				onError("Spec has validation errors. Fix them on the Spec tab before saving.");
-				return;
-			}
-		}
-		if (!specValidation.valid) {
-			onError(`Cannot save: ${specValidationMessages[0]?.message ?? "Spec is invalid"}`);
+		if (legacy) {
+			await commitSave(spec, "");
 			return;
 		}
-
-		// Re-compile against the freshest spec (applyYaml may have mutated it
-		// since the memo snapshotted). Block save when any error is present;
-		// the canvas error strip already shows the user what is broken.
-		const finalCompile = compileGraph(spec);
+		const currentSpec = yamlDirty ? applyYaml() : spec;
+		if (!currentSpec) {
+			onError("Source has validation errors. Fix them before saving.");
+			return;
+		}
+		const validation = validateRoutineSpec(currentSpec);
+		if (!validation.valid) {
+			onError(`Cannot save: ${summarizeRoutineValidationErrors(validation.errors, currentSpec)[0]?.message ?? "Routine is invalid"}`);
+			return;
+		}
+		// An untouched loaded routine keeps its exact authored source and step
+		// order; opening the canvas is not an implicit migration or graph edit.
+		if (routine?.specYaml && !yamlDirty && currentSpec === persistedSpec.current) {
+			await commitSave(currentSpec, routine.specYaml);
+			return;
+		}
+		const finalCompile = compileGraph(currentSpec);
 		if (finalCompile.errors.length > 0) {
 			const first = finalCompile.errors[0]!;
 			onError(`Cannot save: ${first.message}${finalCompile.errors.length > 1 ? ` (+${finalCompile.errors.length - 1} more)` : ""}`);
@@ -220,18 +234,15 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 		}
 		// Apply the topo-sorted step order so the runtime engine walks the graph
 		// the user drew. No-op when compile was the identity.
-		const specToSave: RoutineSpec = finalCompile.steps === spec.steps
-			? spec
-			: { ...spec, steps: finalCompile.steps };
+		const specToSave: RoutineSpec = finalCompile.steps === currentSpec.steps
+			? currentSpec
+			: { ...currentSpec, steps: finalCompile.steps };
 		const specYaml = stringifySpec(specToSave);
 
-		// T-70: from canvas mode, route the save through a diff-preview dialog
-		// unless the user has explicitly opted out (env or localStorage). Other
-		// tabs save directly — the YAML editor on the Spec tab is already a
-		// preview of its own, and the Steps/Triggers/Settings forms never
-		// trigger branch compilation.
+		// Source review is optional, never part of the normal create/save path.
 		const previewable =
-			tab === "canvas" &&
+			tab === "spec" &&
+			!legacy &&
 			!shouldSkipSavePreview() &&
 			specYaml !== (routine?.specYaml ?? "");
 		if (previewable) {
@@ -244,7 +255,20 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 	async function commitSave(specToSave: RoutineSpec, specYaml: string): Promise<void> {
 		setBusy(true);
 		try {
-			if (routine) {
+			if (routine && legacy) {
+				const action = specToSave.steps[0]!;
+				const cron = specToSave.trigger.find((trigger) => "cron" in trigger);
+				const updated = await routinesApi.update(routine.id, {
+					name: specToSave.name,
+					description: specToSave.description ?? "",
+					cron: cron && "cron" in cron ? cron.cron : "",
+					actionKind: legacyKind,
+					actionBody: action.type === "agent" ? action.prompt : action.type === "run" ? action.command : routine.actionBody,
+					actionCwd: legacyCwd,
+					enabled,
+				});
+				onSaved(updated);
+			} else if (routine) {
 				const updated = await routinesApi.update(routine.id, {
 					name: specToSave.name,
 					description: specToSave.description ?? "",
@@ -266,6 +290,7 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 				onSaved(created);
 			}
 			setPendingSave(null);
+			persistedSpec.current = specToSave;
 		} catch (e) {
 			onError(String(e));
 		} finally {
@@ -315,11 +340,18 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 
 	// ─── Render ────────────────────────────────────────────────────────────
 
+	const legacyAction = spec.steps[0];
 	const canSave =
 		spec.name.trim().length > 0 &&
 		spec.trigger.length > 0 &&
 		spec.steps.length > 0 &&
-		specValidation.valid &&
+		(legacy
+			? (legacyAction?.type === "agent"
+				? legacyAction.prompt
+				: legacyAction?.type === "run"
+					? legacyAction.command
+					: routine?.actionBody ?? "").trim().length > 0
+			: specValidation.valid) &&
 		compile.errors.length === 0 &&
 		!busy;
 
@@ -333,7 +365,16 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 					: "mx-auto flex h-full max-w-5xl flex-col overflow-hidden rounded-lg border border-line bg-paper shadow-[0_1px_0_0_rgb(var(--ink)/0.03)]"
 			}
 		>
-			<TabBar tab={tab} onChange={switchTab} stepCount={spec.steps.length} triggerCount={spec.trigger.length} />
+			<div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+				<label className="flex min-w-0 flex-1 items-center gap-2 text-xs text-ink-2">
+					Name
+					<input aria-label="Routine name" value={spec.name} onChange={(e) => updateSpec({ ...spec, name: e.target.value })} className="field h-8 min-w-0 flex-1 px-2 text-sm" />
+				</label>
+				<button type="button" aria-expanded={advanced} onClick={toggleAdvanced} className="btn-ghost h-8 px-2 text-xs">
+					{advanced ? "Hide advanced" : "Advanced"}
+				</button>
+			</div>
+			{advanced ? <TabBar tab={tab} onChange={switchTab} stepCount={spec.steps.length} triggerCount={spec.trigger.length} legacy={legacy} /> : null}
 			<div
 				className={
 					tab === "canvas"
@@ -376,6 +417,10 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 						selectedRunId={runOverlay.selectedRunId}
 						onSelectRun={runOverlay.setSelectedRunId}
 						stepRunsByStepId={runOverlay.stepRunsByStepId}
+						advanced={advanced && !legacy}
+						allowAdd={!legacy}
+						allowDelete={!legacy}
+						allowConnect={!legacy}
 					/>
 				) : null}
 
@@ -385,8 +430,31 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 
 				{tab === "settings" ? (
 					<div className="space-y-3">
-						<SettingsForm spec={spec} onChange={updateSpec} />
-						{routine ? (
+						{legacy ? (
+							<div className="space-y-3">
+								<label className="block text-xs text-ink-2">Description
+									<textarea aria-label="Routine description" value={spec.description ?? ""} onChange={(e) => updateSpec({ ...spec, description: e.target.value })} rows={3} className="field mt-1 w-full px-2 py-1" />
+								</label>
+								<label className="block text-xs text-ink-2">Schedule (cron; empty for on demand)
+									<input aria-label="Routine schedule" value={spec.trigger.flatMap((trigger) => "cron" in trigger ? [trigger.cron] : [])[0] ?? ""} onChange={(e) => updateSpec({ ...spec, trigger: e.target.value ? [{ cron: e.target.value }] : [{ manual: {} }] })} className="field mt-1 h-8 w-full px-2" />
+								</label>
+								<label className="block text-xs text-ink-2">Action
+									<select aria-label="Legacy action kind" value={legacyKind} onChange={(e) => {
+										const kind = e.target.value as Routine["actionKind"];
+										const action = spec.steps[0]!;
+										const body = action.type === "agent" ? action.prompt : action.type === "run" ? action.command : "";
+										setLegacyKind(kind);
+										updateSpec({ ...spec, steps: [kind === "prompt" ? { id: "action", type: "agent", prompt: body } : { id: "action", type: "run", command: body, cwd: action.type === "run" ? action.cwd : legacyCwd }] });
+									}} className="field mt-1 h-8 w-full px-2">
+										<option value="bash">Shell command</option><option value="script">Script</option><option value="prompt">Ask an agent</option>
+									</select>
+								</label>
+								<label className="block text-xs text-ink-2">Working directory
+									<input aria-label="Working directory" value={legacyCwd} onChange={(e) => setLegacyCwd(e.target.value)} className="field mt-1 h-8 w-full px-2" />
+								</label>
+							</div>
+						) : <SettingsForm spec={spec} onChange={updateSpec} />}
+						{routine && !legacy ? (
 							<WebhookSecretPanel routineId={routine.id} refreshKey={routine.updatedAt} onError={onError} />
 						) : null}
 					</div>
@@ -396,6 +464,7 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 					<div className="space-y-2">
 						<textarea
 							value={yamlBuffer}
+							aria-label="Routine source"
 							onChange={(e) => {
 								setYamlBuffer(e.target.value);
 								setYamlDirty(true);
@@ -411,7 +480,7 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 								disabled={!yamlDirty}
 								className="btn-ghost h-7 text-2xs disabled:opacity-40"
 							>
-								Apply to form
+								Apply to canvas
 							</button>
 							{yamlDirty ? (
 								<span className="font-mono text-2xs text-warn">unsaved YAML edits</span>
@@ -451,7 +520,7 @@ export function RoutineBuilder({ routine, onSaved, onError }: Props) {
 					</div>
 				) : null}
 			</div>
-			{specValidationMessages.length > 0 ? (
+			{!legacy && spec.steps.length > 0 && specValidationMessages.length > 0 ? (
 				<ValidationSummary messages={specValidationMessages} />
 			) : null}
 			<Footer
@@ -485,19 +554,23 @@ function TabBar({
 	onChange,
 	stepCount,
 	triggerCount,
+	legacy,
 }: {
 	tab: Tab;
 	onChange: (next: Tab) => void;
 	stepCount: number;
 	triggerCount: number;
+	legacy: boolean;
 }) {
-	const tabs: ReadonlyArray<{ id: Tab; label: string; badge?: number }> = [
-		{ id: "canvas", label: "Canvas" },
-		{ id: "steps", label: "Steps", badge: stepCount },
-		{ id: "triggers", label: "Triggers", badge: triggerCount },
-		{ id: "settings", label: "Settings" },
-		{ id: "spec", label: "Spec (YAML)" },
-	];
+	const tabs: ReadonlyArray<{ id: Tab; label: string; badge?: number }> = legacy
+		? [{ id: "canvas", label: "Canvas" }, { id: "settings", label: "Options" }]
+		: [
+			{ id: "canvas", label: "Canvas" },
+			{ id: "steps", label: "Steps", badge: stepCount },
+			{ id: "triggers", label: "Triggers", badge: triggerCount },
+			{ id: "settings", label: "Options" },
+			{ id: "spec", label: "View source" },
+		];
 	return (
 		<div className="flex shrink-0 border-b border-line bg-paper">
 			{tabs.map((t) => (

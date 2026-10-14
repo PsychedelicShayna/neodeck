@@ -19,6 +19,7 @@ import type { RoutineLayoutEdgeKind, RoutineStep, RoutineStepRun } from "@npi-de
  */
 export interface StepNodeData extends Record<string, unknown> {
 	step: RoutineStep;
+	advanced?: boolean;
 	/** Marker set by `graph-import` when no explicit `layout.nodes[id]` existed. */
 	inferredPosition: boolean;
 	/**

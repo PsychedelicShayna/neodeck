@@ -116,8 +116,36 @@ todo synthesis, ext-ui dialogs, reducer event handling) and DB layer
 routes are still primarily verified end-to-end via:
 
 1. `bun run typecheck` across every workspace.
-2. Manual browser smoke against `http://127.0.0.1:5173`.
+2. Isolated browser smoke through `scripts/browser-smoke.ts` against a separate
+   deck instance with private state and a separate port (see below).
 3. API smokes — small curl scripts under `.logs/` (gitignored).
+
+Choose free, unused deck and debugging ports; the following ports are examples.
+
+```sh
+SMOKE_HOME="$(mktemp -d /tmp/neodeck-browser-smoke-XXXXXX)"
+bun scripts/browser-smoke.ts --home "$SMOKE_HOME" --timeout 180 -- \
+  /absolute/path/to/chromium --user-data-dir="$SMOKE_HOME/profile" \
+  --remote-debugging-port=19999 http://127.0.0.1:18999
+```
+
+The wrapper requires a dedicated temporary home and private browser profile.
+Use private `HOME`, `NPI_DECK_HOME` and `PI_CODING_AGENT_DIR` for the separate
+deck too; never smoke against the daily-driver service. The wrapper runs
+Chromium/Electron under `timeout` + `xvfb-run -a`, with mandatory
+`--password-store=basic` and no inherited `DBUS_SESSION_BUS_ADDRESS`,
+`XDG_CURRENT_DESKTOP`, `XDG_SESSION_DESKTOP` or `DESKTOP_SESSION`.
+Display, Wayland and credential variables are not inherited; HOME and all
+XDG paths are private. Conflicting password-store or display overrides fail.
+Never use display `:0` or Xephyr; there is no fallback if Xvfb fails.
+
+Before interacting, verify the actual child's `/proc/<pid>/cmdline` contains
+the mandatory flag and `/proc/<pid>/environ` lacks the four bus/desktop keys,
+uses the private paths, and has a non-`:0` display. Afterward terminate the
+entire process tree, including detached crash handlers and Xvfb, and verify
+with `pgrep` for the private profile, debugging port and Xvfb display. The
+wrapper also checks its process group and private crash handlers on exit,
+timeout and interruption.
 
 When you add a feature with non-trivial state, ship at least the
 bridge-side test alongside it. Reducer cases want a unit test apiece —

@@ -14,7 +14,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { RoutineSpec } from "@npi-deck/protocol";
 
-import { parseSpec, replaceStep, stringifySpec } from "./spec-yaml";
+import { cardPropertyDocument, parseSpec, replaceStep, setCardBodyContent, setCardBodyProperty, stringifySpec } from "./spec-yaml";
 
 const baseSpec: RoutineSpec = {
 	name: "layout-roundtrip",
@@ -167,5 +167,31 @@ describe("replaceStep — id rename cascade", () => {
 		});
 		expect(next.layout).toBeUndefined();
 		expect(next.steps[0]?.id).toBe("renamed_a");
+	});
+});
+
+describe("card body properties", () => {
+	const body = "---\n# Keep this comment\ncustom: {values: [1, two]}\nworktree: /old\nread-only: true\n---\n\nKeep {{ steps.prepare.stdout }}\n";
+
+	test("changing one property preserves unrelated header bytes and expression content", () => {
+		const changed = setCardBodyProperty(body, "worktree", "/new");
+		expect(changed).toBe(body.replace("worktree: /old", "worktree: /new"));
+		expect(setCardBodyProperty(changed, "worktree", "/new")).toBe(changed);
+	});
+
+	test("editing basic body text preserves the entire leading property block", () => {
+		const changed = setCardBodyContent(body, "Edited text\n");
+		expect(changed).toBe("---\n# Keep this comment\ncustom: {values: [1, two]}\nworktree: /old\nread-only: true\n---\nEdited text\n");
+	});
+
+	test("removing a property does not remove unknown properties or body content", () => {
+		expect(setCardBodyProperty(body, "worktree", undefined)).toBe(body.replace("worktree: /old\n", ""));
+	});
+
+	test("flow-map edits remain valid and preserve nested properties", () => {
+		const changed = setCardBodyProperty("---\n{custom: {values: [1, two]}, read-only: false}\n---\nText", "read-only", true);
+		const parsed = cardPropertyDocument(changed);
+		expect(parsed.document.toJSON()).toEqual({ custom: { values: [1, "two"] }, "read-only": true });
+		expect(parsed.content).toBe("Text");
 	});
 });

@@ -93,6 +93,10 @@ interface RoutineCanvasProps {
 	 * resolved from the selected node + selected run.
 	 */
 	routineId?: string;
+	advanced?: boolean;
+	allowAdd?: boolean;
+	allowDelete?: boolean;
+	allowConnect?: boolean;
 }
 
 const NODE_TYPES = { step: StepNode };
@@ -138,6 +142,10 @@ function RoutineCanvasInner({
 	selectedRunId,
 	onSelectRun,
 	routineId,
+	advanced = false,
+	allowAdd = true,
+	allowDelete = true,
+	allowConnect = true,
 }: RoutineCanvasProps): JSX.Element {
 	// Re-derive the React Flow graph whenever the spec's steps or layout change.
 	const imported = useMemo(
@@ -234,13 +242,13 @@ function RoutineCanvasInner({
 				const data = sameErr && sameIf && sameRun
 					? n.data
 					: { ...n.data, compileError: err, isIfNode: ifFlag, stepRun: run };
+				const displayData = { ...data, advanced };
 				const selected = selId === n.id;
-				if (data === n.data && !selected) return n;
-				return selected ? { ...n, data, selected: true } : { ...n, data };
+				return { ...n, data: displayData, selected, deletable: allowDelete };
 			}),
 		);
 		setEdges(imported.edges);
-	}, [imported, errorByStepId, isIfNode, stepRunsByStepId, setNodes, setEdges]);
+	}, [imported, errorByStepId, isIfNode, stepRunsByStepId, setNodes, setEdges, advanced, allowDelete]);
 
 	const handleNodesChange = useCallback(
 		(changes: NodeChange<StepNodeType>[]) => {
@@ -432,10 +440,10 @@ function RoutineCanvasInner({
 					fitView
 					fitViewOptions={FIT_VIEW_OPTIONS}
 					nodesDraggable
-					nodesConnectable
+					nodesConnectable={allowConnect}
 					elementsSelectable
 				/>
-				<AddStepPalette onAdd={handleAddStep} />
+				{allowAdd ? <AddStepPalette onAdd={handleAddStep} advanced={advanced} /> : null}
 				{runs && runs.length > 0 && onSelectRun ? (
 					<RunOverlayPicker
 						runs={runs}
@@ -449,9 +457,9 @@ function RoutineCanvasInner({
 				{empty ? (
 					<div className="pointer-events-none absolute inset-0 flex items-center justify-center">
 						<div className="rounded border border-dashed border-line bg-paper-2/80 px-4 py-3 text-center font-mono text-2xs text-ink-3">
-							No steps yet.
+							What should this routine do?
 							<br />
-							Click <span className="font-semibold text-ink-2">+ Add step</span> above to begin.
+							Choose <span className="font-semibold text-ink-2">Add action</span> to begin.
 						</div>
 					</div>
 				) : null}
@@ -464,6 +472,8 @@ function RoutineCanvasInner({
 					onClose={handleInspectorClose}
 					onDelete={handleInspectorDelete}
 					mode="inline"
+					advanced={advanced}
+					allowDelete={allowDelete}
 					isIfNode={selectedStep ? isIfNode(selectedStep.id) : false}
 					stepRun={selectedStep ? stepRunsByStepId?.get(selectedStep.id) : undefined}
 					routineId={routineId}
@@ -484,6 +494,8 @@ function RoutineCanvasInner({
 						onClose={handleInspectorClose}
 						onDelete={handleInspectorDelete}
 						mode="drawer"
+						advanced={advanced}
+						allowDelete={allowDelete}
 						isIfNode={selectedStep ? isIfNode(selectedStep.id) : false}
 						stepRun={selectedStep ? stepRunsByStepId?.get(selectedStep.id) : undefined}
 						routineId={routineId}

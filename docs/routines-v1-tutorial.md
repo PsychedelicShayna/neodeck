@@ -1,60 +1,76 @@
-# Routines V1 — Tutorial
+# Routines — Canvas guide
 
-V1 routines are multi-step pipelines: a single routine can fetch data, run
-an LLM against it, write the result somewhere, and persist a snippet of
-state for the next run. Each routine can have multiple triggers (cron,
-webhook, manual) and a budget cap. This walk-through gets you from zero to a
-working daily-briefing in a few minutes.
+Routines open directly on the canvas. Choose what should happen, arrange
+the actions, save, and run. You do not need to read source or configure
+webhooks to create a routine.
 
-## Quickest path: install the daily-briefing template
+## Create and run
 
-The fastest way to see a V1 routine in action:
+1. Open **Routines**. The empty canvas is ready for a new routine.
+2. Set **Name**, then choose **Add action**. For example, choose **Run command**
+   and enter `echo hello` in the action inspector.
+3. Add more actions as needed. Click an action to edit it; drag to arrange
+   the canvas. Connections determine execution order.
+4. Click **Create**, then **Run now**. New routines can run on demand without
+   enabling a schedule. The canvas shows the latest run's status and output.
+5. Select a saved routine in the left sidebar to load and edit it. Existing
+   routines open on the canvas even when they have no saved canvas layout.
+
+Saving from the canvas does not open a source preview. Existing single-action
+routines keep their original storage and execution behavior; their command or
+prompt is editable on the canvas, with schedule, action kind and working
+directory under **Advanced → Options**. They remain single-action routines.
+
+New agent prompts and card bodies start without reference expressions. Plain
+prompts, titles and body text are editable directly. Existing expressions stay
+intact but are hidden in basic mode, including node previews; choose
+**Advanced** to edit them. Card body text remains editable separately from
+its frontmatter. Saving an untouched loaded routine keeps its original source
+bytes, step order and execution settings, without a graph migration.
+
+Open **Card properties** in the Create card inspector for **Read-only research**,
+**Linked worktree** and named custom properties. Choose **Advanced** to reveal
+its destination column, working directory and the arbitrary YAML property editor.
+The controls compose leading body frontmatter without replacing unrelated
+properties or body text. They are also available on Create inbox item, so its
+properties can travel with a later promotion. For **Make a card from inbox**,
+edit the source item's body/properties in Inbox
+before promotion; promotion keeps that content unchanged. Advanced also
+reveals actions that require card/inbox identifiers, their destination
+references and the settings of existing technical actions.
+
+## Deliberate advanced access
+
+Choose **Advanced** to reveal the steps list, triggers, execution options,
+additional action types and per-action identifiers, conditions and failure
+handling. **View source** opens the existing routine's source editor. Use
+**Apply to canvas** to apply source edits; saving from this view offers a
+source-change review. Invalid source must be corrected before returning to
+the canvas or hiding advanced controls.
+
+Advanced controls are hidden again when you open another routine or reopen
+Routines. Source is an expert compatibility tool, not the authoring contract:
+the underlying model is intended to change separately from this canvas-first UI.
+
+## Advanced reference
+
+The following sections describe the current runtime for existing routines and
+expert editing. None of these concepts is required for the create-and-run path.
+
+### Optional shipped examples
+
+Templates are no longer the routines entry point. Existing templates remain
+available through the API, for example:
 
 ```bash
-# List shipped templates
 curl http://127.0.0.1:1701/api/routine-templates
-
-# Install one
 curl -X POST http://127.0.0.1:1701/api/routine-templates/daily-briefing
 ```
 
-That creates a routine in **disabled** state. Open the deck at
-`/routines`, click the new entry, and you'll see the **Builder** tab with all
-7 steps, the **Triggers** tab with its cron + webhook, the **Settings** tab
-with the budget caps, and the **Spec (YAML)** tab with the raw spec.
-
-To run it once on demand:
-
-```bash
-curl -X POST http://127.0.0.1:1701/api/routines/<id>/run
-```
-
-Or just click **Run now** in the editor. Once it's finished, the routine creates
-a new **capture item in the deck's native Inbox** (`/inbox`, kind=`capture`).
-
-The other shipped template, `kb-orphan-census`, installs the same way. Once
-enabled it runs every Monday and files one inbox item listing the KB notes that
-no other note links to (honouring `.kbignore`); it never edits the KB.
-
-## Author one yourself in the visual builder
-
-1. Open `/routines` and click **New routine**.
-2. The header shows two mode pills — **pipeline** (V1) and **single-action**
-   (legacy V0). New routines default to pipeline.
-3. **Settings** tab: set a name, optionally a description, concurrency,
-   timezone, tags, and budget caps.
-4. **Triggers** tab: add at least one trigger (cron / webhook / manual).
-   Cron entries get a live "next 3 runs" preview against the IANA timezone
-   you set.
-5. **Steps** tab: click **+ Add step** and pick a type. Each card has the
-   shared fields (`id`, `when`, `on_failure`, `retry`, `timeout_secs`) on
-   top, then the type-specific fields underneath. Up/down arrows reorder.
-6. Toggle **Enabled** in the footer, then **Create**.
-
-The **Spec (YAML)** tab shows the same routine as raw YAML. Edit there and
-click **Apply to form** to sync the changes back — useful for advanced
-patterns the form doesn't expose (deeply nested transforms, complex
-templating).
+The installed routine is disabled. Select it in the routines sidebar to see
+its canvas, then choose **Run now**. The daily briefing creates a capture in
+the deck's native Inbox. `kb-orphan-census` lists unlinked KB notes without
+editing them.
 
 ## The 9 step types
 

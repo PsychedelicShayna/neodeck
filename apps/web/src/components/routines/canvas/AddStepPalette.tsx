@@ -15,6 +15,7 @@ import { ChevronDown, Plus } from "lucide-react";
 import type { RoutineDeckAction, RoutineStep } from "@npi-deck/protocol";
 
 import { STEP_CATEGORIES } from "./step-categories";
+import { actionLabel } from "../step-form-render";
 
 interface AddStepPaletteProps {
 	onAdd: (
@@ -22,9 +23,10 @@ interface AddStepPaletteProps {
 		presetAction?: RoutineDeckAction,
 		presetKind?: "if",
 	) => void;
+	advanced?: boolean;
 }
 
-export function AddStepPalette({ onAdd }: AddStepPaletteProps): JSX.Element {
+export function AddStepPalette({ onAdd, advanced = false }: AddStepPaletteProps): JSX.Element {
 	const [open, setOpen] = useState(false);
 	const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -69,11 +71,11 @@ export function AddStepPalette({ onAdd }: AddStepPaletteProps): JSX.Element {
 				onClick={() => setOpen((o) => !o)}
 				aria-expanded={open}
 				aria-haspopup="menu"
-				aria-label="Add a routine step"
-				className="flex h-8 items-center gap-1.5 rounded border border-line bg-paper px-2.5 font-mono text-2xs uppercase tracking-meta text-ink-2 shadow-sm hover:text-ink"
+				aria-label="Add action"
+				className="flex h-8 items-center gap-1.5 rounded border border-line bg-paper px-2.5 text-xs text-ink-2 shadow-sm hover:text-ink"
 			>
 				<Plus className="h-3.5 w-3.5 text-accent" />
-				Add step
+				Add action
 				<ChevronDown
 					className={`h-3 w-3 text-ink-3 transition-transform ${open ? "rotate-180" : ""}`}
 				/>
@@ -81,36 +83,37 @@ export function AddStepPalette({ onAdd }: AddStepPaletteProps): JSX.Element {
 			{open ? (
 				<div
 					role="menu"
-					aria-label="Step type"
+					aria-label="Choose an action"
 					className="mt-1 max-h-[70vh] w-[320px] overflow-y-auto rounded border border-line bg-paper shadow-xl"
 				>
-					{STEP_CATEGORIES.map((cat, i) => (
+					{STEP_CATEGORIES.filter((cat) => advanced || cat.key !== "io").map((cat, i) => (
 						<div
 							key={cat.key}
 							className={i === 0 ? "" : "border-t border-line"}
 						>
 							<div className="bg-paper-2/60 px-2.5 pb-1 pt-1.5">
 								<div className="font-mono text-2xs uppercase tracking-meta text-ink-3">
-									{cat.label}
+									{cat.key === "compute" ? "Commands and agents" : cat.key === "deck-read" ? "Read from the deck" : cat.key === "deck-write" ? "Update the deck" : cat.label}
 								</div>
-								<div className="text-2xs text-ink-4">{cat.tagline}</div>
+								{advanced ? <div className="text-2xs text-ink-4">{cat.tagline}</div> : null}
 							</div>
 							<div className="py-1">
-								{cat.entries.map((entry) => (
+								{cat.entries.filter((entry) => advanced || (
+									!["transform", "if", "set_state"].includes(entry.key) &&
+									!["move_task", "get_task", "get_inbox_item", "promote_inbox_item_to_task"].includes(entry.presetAction ?? "")
+								)).map((entry) => (
 									<button
 										key={entry.key}
 										type="button"
 										role="menuitem"
 										onClick={() => pick(entry.value, entry.presetAction, entry.presetKind)}
-										aria-label={`Add ${entry.label} step`}
+										aria-label={`Add ${actionLabel({ type: entry.value, action: entry.presetAction })}`}
 										className="flex w-full items-start gap-2 px-2.5 py-1.5 text-left hover:bg-paper-3"
 									>
-										<span className="shrink-0 pt-px font-mono text-2xs uppercase tracking-meta text-accent">
-											{entry.label}
+										<span className="text-xs text-ink-2">
+											{entry.presetKind === "if" ? "Branch on a condition" : actionLabel({ type: entry.value, action: entry.presetAction })}
 										</span>
-										<span className="text-2xs leading-snug text-ink-2">
-											{entry.help}
-										</span>
+										{advanced ? <span className="text-2xs leading-snug text-ink-3">{entry.help}</span> : null}
 									</button>
 								))}
 							</div>

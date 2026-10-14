@@ -169,13 +169,13 @@ export function EditorInspector({ routine, onChange, onDeleted, onError }: Props
 				</div>
 			</section>
 
-			<section className="p-3">
-				<div className="meta mb-2">Reference</div>
-				<div className="space-y-1 font-mono text-2xs text-ink-3">
+			<details className="p-3">
+				<summary className="cursor-pointer text-xs text-ink-3">Advanced reference</summary>
+				<div className="mt-2 space-y-1 font-mono text-2xs text-ink-3">
 					<div>Steps: run / agent / http / write / transform / wait / set_state / mcp</div>
 					<div>Template refs: {"{{ run.date }}"}, {"{{ steps.id.json }}"}, {"{{ state.key }}"}</div>
 				</div>
-			</section>
+			</details>
 		</div>
 	);
 }
