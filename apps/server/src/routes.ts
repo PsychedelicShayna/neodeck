@@ -48,6 +48,7 @@ import type { MarketplaceService } from "./marketplace-service.ts";
 import type { SkillsService } from "./skills-service.ts";
 import type { KbService } from "./kb-service.ts";
 import type { RequestPeerEnv } from "./request-peer.ts";
+import type { CardAgentRunner } from "./card-agents.ts";
 
 export function buildRouter(
 	bridge: AgentBridge,
@@ -57,7 +58,7 @@ export function buildRouter(
 	marketplace: MarketplaceService,
 	skills: SkillsService,
 	kb: KbService,
-	opts: { restartServer?: () => RestartServerResponse } = {},
+	opts: { restartServer?: () => RestartServerResponse; cardAgents?: CardAgentRunner } = {},
 ): Hono<RequestPeerEnv> {
 	const app = new Hono<RequestPeerEnv>();
 
@@ -267,7 +268,7 @@ export function buildRouter(
 		return c.json({ ok: true }, 202);
 	});
 
-	app.route("/", buildTasksRouter());
+	app.route("/", buildTasksRouter(opts.cardAgents));
 	app.route("/", buildUploadsRouter({ uploadsRoot: config.uploadsRoot }));
 	app.route("/", buildRoutinesRouter(runner));
 	app.route("/", buildHooksRouter(runner));
@@ -280,7 +281,7 @@ export function buildRouter(
 	app.route("/", buildBridgesRouter(supervisor));
 	app.route("/", buildMarketplaceRouter(marketplace));
 	app.route("/", buildSkillsRouter(skills));
-	app.route("/", buildKbRouter(kb));
+	app.route("/", buildKbRouter(kb, { resolveAgent: token => opts.cardAgents?.resolveToken(token) }));
 	app.route("/auth/oauth", buildAuthOAuthRouter());
 	app.route("/onboarding", buildOnboardingRouter());
 	app.route("/subagents", buildSubagentsRouter(bridge));

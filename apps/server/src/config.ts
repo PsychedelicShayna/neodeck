@@ -19,6 +19,13 @@ export interface Config {
 	dbPath: string;
 	/** Absolute path to the uploads root (images pasted into task bodies). */
 	uploadsRoot: string;
+	/** Global card-agent admission limit; positive integer, no hard upper cap. */
+	cardAgentConcurrency?: number;
+	cardAgentModel?: string;
+	cardAgentRole?: string;
+	cardAgentActiveState?: string;
+	cardAgentDoneState?: string;
+	cardAgentFailureState?: string;
 }
 
 export function parseInt10(value: string | undefined, fallback: number): number {
@@ -53,5 +60,11 @@ export function loadConfig(): Config {
 		idleTimeoutMs: parseInt10(process.env.NPI_DECK_IDLE_TIMEOUT_MS, 5 * 60_000),
 		dbPath,
 		uploadsRoot: path.resolve(process.env.NPI_DECK_UPLOADS_ROOT?.trim() || path.join(path.dirname(dbPath), "uploads")),
+		cardAgentConcurrency: process.env.NPI_DECK_CARD_AGENT_CONCURRENCY === undefined ? 12 : Number(process.env.NPI_DECK_CARD_AGENT_CONCURRENCY),
+		cardAgentModel: process.env.NPI_DECK_CARD_AGENT_MODEL?.trim() || undefined,
+		cardAgentRole: process.env.NPI_DECK_CARD_AGENT_ROLE?.trim() || undefined,
+		cardAgentActiveState: process.env.NPI_DECK_CARD_AGENT_ACTIVE_STATE?.trim() || "s_active",
+		cardAgentDoneState: process.env.NPI_DECK_CARD_AGENT_DONE_STATE?.trim() || "s_done",
+		cardAgentFailureState: process.env.NPI_DECK_CARD_AGENT_FAILURE_STATE?.trim() || "s_blocked",
 	};
 }

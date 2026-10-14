@@ -211,6 +211,8 @@ export function scaffoldStep(
 						action: "get_inbox_item",
 						inbox_ref: "i_...",
 					};
+				case "kb_read":
+					return { id, type: "deck", action: "kb_read", path: "README.md" };
 				case "kb_orphan_census":
 					return {
 						id,
@@ -273,6 +275,8 @@ function pickBaseId(
 			return "get_inbox_item";
 		case "kb_orphan_census":
 			return "kb_orphan_census";
+		case "kb_read":
+			return "kb_read";
 	}
 }
 
@@ -398,6 +402,7 @@ export const STEP_TYPE_DESCRIPTIONS: ReadonlyArray<StepTemplateDescriptor> = [
 	{ key: "get_task", value: "deck", label: "get task", help: "Fetch a single task by T-N or task id.", presetAction: "get_task" },
 	{ key: "get_inbox_item", value: "deck", label: "get inbox item", help: "Fetch a single inbox item by id.", presetAction: "get_inbox_item" },
 	{ key: "kb_orphan_census", value: "deck", label: "kb orphan census", help: "List the KB notes no other note links to. Honours .kbignore.", presetAction: "kb_orphan_census" },
+	{ key: "kb_read", value: "deck", label: "read KB note", help: "Explicit KB input, available only to downstream wired steps.", presetAction: "kb_read" },
 	{ key: "write", value: "write", label: "write", help: "Write a templated string to a file." },
 	{ key: "transform", value: "transform", label: "transform", help: "JS expression in a sandbox; sets context.steps.X.json." },
 	{ key: "set_state", value: "set_state", label: "set_state", help: "Upsert keys into the routine's persistent state." },

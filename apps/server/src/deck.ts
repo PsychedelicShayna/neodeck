@@ -23,9 +23,10 @@ import { WsHub, type ConnectionData } from "./ws.ts";
 import { MarketplaceService } from "./marketplace-service.ts";
 import { SkillsService } from "./skills-service.ts";
 import { startSkillsWatcher } from "./skills-watcher.ts";
-import { KbService, resolveKbRoot } from "./kb-service.ts";
+import { resolveKbRoot } from "./kb-service.ts";
 import { startKbWatcher } from "./kb-watcher.ts";
 import { KbProtocolHandler } from "./kb-protocol.ts";
+import { workflowKb } from "./kb-workflows.ts";
 import { syncMaintenanceGateOrgRoot } from "./maintenance-gate.ts";
 import { installOptedInStarters, reportRetiredStarterSwitches } from "./starters.ts";
 import { buildDefaultBridgeSupervisor } from "./bridge-supervisor.ts";
@@ -192,6 +193,9 @@ export async function startDeck(opts: StartDeckOptions = {}): Promise<DeckHandle
 	notificationService.register(new BrowserNotificationChannel());
 
 
+	const { CardAgentRunner } = await import("./card-agents.ts");
+	const cardAgents = new CardAgentRunner(config);
+	await cardAgents.recover();
 	const bridge = new InProcessAgentBridge({
 		idleTimeoutMs: config.idleTimeoutMs,
 	});
@@ -201,7 +205,7 @@ export async function startDeck(opts: StartDeckOptions = {}): Promise<DeckHandle
 	const supervisor = buildDefaultBridgeSupervisor();
 	const marketplaceService = new MarketplaceService();
 	const skillsService = new SkillsService(config, marketplaceService);
-	const kbService = new KbService({ root: resolveKbRoot() });
+	const kbService = workflowKb();
 	const router = buildRouter(
 		bridge,
 		config,
@@ -210,7 +214,7 @@ export async function startDeck(opts: StartDeckOptions = {}): Promise<DeckHandle
 		marketplaceService,
 		skillsService,
 		kbService,
-		{ restartServer: () => scheduleRestart(stop) },
+		{ restartServer: () => scheduleRestart(stop), cardAgents },
 	);
 	const skillsWatcherDispose = activeBackend() ? startSkillsWatcher(config) : () => {};
 	const kbWatcherDispose = startKbWatcher(kbService);
@@ -353,6 +357,7 @@ export async function startDeck(opts: StartDeckOptions = {}): Promise<DeckHandle
 		},
 	});
 
+	cardAgents.setApiOrigin(`http://${server.hostname === "0.0.0.0" ? "127.0.0.1" : server.hostname}:${server.port}`);
 	log.info(`listening on http://${server.hostname}:${server.port}`);
 	if (bootDeadline) clearTimeout(bootDeadline);
 	if (pending) rmSync(transactionFile, { force: true });
@@ -369,11 +374,13 @@ export async function startDeck(opts: StartDeckOptions = {}): Promise<DeckHandle
 		const steps: Array<[string, () => unknown]> = [
 			["work admissions close", () => workRegistry.closeAdmissions()],
 			["runner close admissions", () => routinesRunner.closeAdmissions()],
+			["card runner close admissions", () => cardAgents.closeAdmissions()],
 			["listener stop", () => server.stop(true)],
 			["oauth flows abort", () => abortOAuthFlows()],
 			["skills watcher dispose", () => skillsWatcherDispose()],
 			["kb watcher dispose", () => kbWatcherDispose()],
 			["runner dispose", () => routinesRunner.dispose()],
+			["card runner dispose", () => cardAgents.dispose()],
 			["owned processes stop", () => stopOwnedProcesses()],
 			["bridge supervisor shutdown", () => supervisor.shutdown()],
 			["bridge dispose", () => bridge.dispose()],

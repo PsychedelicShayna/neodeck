@@ -21,9 +21,46 @@ for UI shortcuts that don't need to round-trip through the agent.
 ## Deck slash commands
 
 Deck-native commands operate directly on the kanban / inbox / routines DB.
-They never hit the model and respond instantly. The synthetic assistant
-message is marked **SYNTHETIC** in the chat so you can see at a glance it
-didn't burn tokens.
+They never hit the model, except `/kb read`, which explicitly adds the requested
+note to the agent prompt. Local replies are marked **SYNTHETIC** in chat.
+
+### `/kb read <path>`
+
+Explicitly read one vault note into this turn's prompt. No chat, workspace,
+or card receives KB context automatically. Agents can also call `kb_read`
+to search entry metadata and traverse open notes, outgoing links, or backlinks.
+
+### `/kb capture <inbox-id> <path>`
+
+Capture an inbox item into the current project agent's KB area and mark it
+processed after the note is saved. Requires an active project chat. For example:
+
+```
+/kb capture <inbox-id> projects/neodeck/learned-api.md
+```
+
+The KB browser is read-only; agents populate it using `kb_write`. Server identity
+determines the writable `projects/<project>/` area, including linked Git worktrees.
+Neighbour writes must be typed edges under `projects/<neighbour>/edges/<project>/`
+with a link to the owning project's knowledge. They cannot change another
+project's ADRs or product decisions. Chat tools use the active session's
+server-bound project identity; read-only agent capabilities cannot write.
+First-run setup selects the vault location without populating it. Direct file and
+starter-scaffold HTTP writes are disabled; ask a project agent to create notes.
+
+The current authority is a server-resolved Git project, shared by its linked
+worktrees. A subject-only agent without a Git project has no write authority:
+it cannot choose a subject namespace in request data. This deliberately fails
+closed because no trusted subject-assignment registry exists yet; it does not
+claim support for independently assigned non-project subject areas.
+
+Native card-agent bearers are produced and revoked by the CardAgentRunner
+consumer in #101, not by the KB producer in #102. The consumer must mount the
+KB router with its live token resolver. Its actual native-worker regression
+checks distinct concurrent/run/reassignment tokens and server denial after
+completion, provider failure, cancellation, shutdown and a new in-process
+runner's recovery. The provider is a local fixture; process-crash recovery is
+not simulated.
 
 ### `/task add <title>`
 

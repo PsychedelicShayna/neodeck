@@ -1,5 +1,6 @@
 import type {
 	CreateTaskRequest,
+	CardRun,
 	CreateTaskStateRequest,
 	ListTasksResponse,
 	MoveTaskRequest,
@@ -39,6 +40,18 @@ export const tasksApi = {
 		return req<Task>(`/tasks/${encodeURIComponent(id)}`, {
 			method: "PATCH",
 			body: JSON.stringify(body),
+		});
+	},
+	assign(id: string): Promise<CardRun> {
+		return req<CardRun>(`/tasks/${encodeURIComponent(id)}/assign`, {
+			method: "POST",
+			body: JSON.stringify({}),
+		});
+	},
+	cancel(id: string): Promise<CardRun> {
+		return req<CardRun>(`/tasks/${encodeURIComponent(id)}/cancel`, {
+			method: "POST",
+			body: JSON.stringify({}),
 		});
 	},
 	remove(id: string): Promise<{ ok: boolean }> {

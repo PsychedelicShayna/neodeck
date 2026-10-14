@@ -10,6 +10,8 @@ import type { Task, TaskState } from "@npi-deck/protocol";
 
 import { broadcastBus } from "../broadcast-bus.ts";
 import { afterCommit, getDb, id, nowIso } from "./index.ts";
+import { latestCardRun } from "./card-runs.ts";
+import { withCardProperties } from "../card-properties.ts";
 
 /**
  * Every committed change to the board goes through this module, so it is the
@@ -65,6 +67,8 @@ function rowToTask(r: TaskRow): Task {
 	const cwd = normalizeCwd(r.cwd);
 	if (cwd !== null) t.cwd = cwd;
 	if (r.archived_at !== null) t.archivedAt = r.archived_at;
+	const run = latestCardRun(r.id);
+	if (run) t.run = run;
 	return t;
 }
 
@@ -292,6 +296,7 @@ export function getTask(taskId: string): Task | undefined {
 export function createTask(input: {
 	title: string;
 	body?: string;
+	properties?: Record<string, unknown>;
 	stateId?: string;
 	cwd?: string | null;
 }): Task {
@@ -319,7 +324,7 @@ export function createTask(input: {
 		db.query<unknown, [string, number, string, string, string, number, string | null, string, string, string]>(
 			`INSERT INTO tasks (id, display_id, title, body, state_id, order_in_state, cwd, created_at, updated_at, state_entered_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		).run(taskId, displayId, input.title, input.body ?? "", state.id, maxOrder + 1000, normalizeCwd(input.cwd), now, now, now);
+		).run(taskId, displayId, input.title, withCardProperties(input.body ?? "", input.properties), state.id, maxOrder + 1000, normalizeCwd(input.cwd), now, now, now);
 	})();
 	const out = getTask(taskId);
 	if (!out) throw new Error("createTask failed");
@@ -332,6 +337,7 @@ export function updateTask(
 	patch: {
 		title?: string;
 		body?: string;
+		properties?: Record<string, unknown>;
 		stateId?: string;
 		orderInState?: number;
 		/** `null` or blank clears the cwd; omit to leave it unchanged. */
@@ -360,7 +366,7 @@ export function updateTask(
 		 WHERE id = ?`,
 	).run(
 		next.title,
-		next.body,
+		withCardProperties(next.body, patch.properties),
 		next.stateId,
 		next.orderInState,
 		normalizeCwd(next.cwd),

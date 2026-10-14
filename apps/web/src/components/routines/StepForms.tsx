@@ -95,6 +95,10 @@ export function AgentStepForm({ step, onChange }: FormProps<"agent">) {
 					placeholder="Summarize {{ steps.fetch_tasks.json }} in 2 sentences."
 				/>
 			</Field>
+			<Field label="KB inputs (explicit note paths; empty means none)">
+				<TagInput values={step.kb_inputs ?? []} onChange={paths => patch({ kb_inputs: paths })}
+					placeholder="projects/neodeck/overview.md" />
+			</Field>
 			<Field label="model (optional)">
 				<TextInput
 					value={step.model ?? ""}
@@ -383,6 +387,9 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 					inbox_ref: step.action === action ? step.inbox_ref : "i_...",
 				});
 				return;
+			case "kb_read":
+				onChange({ ...common, action, path: step.action === action ? step.path : "README.md" });
+				return;
 			case "kb_orphan_census":
 				onChange({
 					...common,
@@ -410,6 +417,7 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 					<option value="get_task">get_task</option>
 					<option value="get_inbox_item">get_inbox_item</option>
 					<option value="kb_orphan_census">kb_orphan_census</option>
+					<option value="kb_read">kb_read (explicit input)</option>
 				</select>
 			</Field>
 			{step.action === "create_inbox_item" ? (
@@ -444,8 +452,8 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 					<Field label="title">
 						<TextInput value={step.title} onChange={(v) => onChange({ ...step, title: v })} placeholder="Follow up on {{ run.date }}" mono />
 					</Field>
-					<Field label="body (optional)">
-						<TextArea value={step.body ?? ""} onChange={(v) => onChange({ ...step, body: v === "" ? undefined : v })} rows={4} placeholder="{{ steps.digest.stdout }}" />
+					<Field label="body / leading YAML properties (optional)">
+						<TextArea value={step.body ?? ""} onChange={(v) => onChange({ ...step, body: v === "" ? undefined : v })} rows={5} placeholder={"---\nread-only: true\nworktree: /path/to/worktree\n---\n{{ steps.digest.stdout }}"} />
 					</Field>
 					<Field label="state_ref (optional)">
 						<TextInput value={step.state_ref ?? ""} onChange={(v) => onChange({ ...step, state_ref: v === "" ? undefined : v })} placeholder="backlog or s_backlog" mono />
@@ -475,6 +483,12 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 					</Field>
 					<Field label="state_ref (optional)">
 						<TextInput value={step.state_ref ?? ""} onChange={(v) => onChange({ ...step, state_ref: v === "" ? undefined : v })} placeholder="backlog or s_backlog" mono />
+					</Field>
+					<Field label="body / leading YAML properties override (optional)">
+						<TextArea value={step.body ?? ""} onChange={(v) => onChange({ ...step, body: v === "" ? undefined : v })} rows={5} placeholder={"---\nread-only: true\n---\nResearch this capture"} />
+					</Field>
+					<Field label="cwd / project routing (optional)">
+						<TextInput value={step.cwd ?? ""} onChange={(v) => onChange({ ...step, cwd: v === "" ? undefined : v })} placeholder="Unassigned when omitted" mono />
 					</Field>
 					<label className="flex items-center gap-2 font-mono text-2xs text-ink-2">
 						<input
@@ -574,6 +588,11 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 						<TextInput value={step.inbox_ref} onChange={(v) => onChange({ ...step, inbox_ref: v })} placeholder="i_..." mono />
 					</Field>
 				</div>
+			) : null}
+			{step.action === "kb_read" ? (
+				<Field label="KB note path (explicit input)">
+					<TextInput value={step.path} onChange={path => onChange({ ...step, path })} placeholder="README.md" mono />
+				</Field>
 			) : null}
 			{step.action === "kb_orphan_census" ? (
 				<div className="space-y-2">

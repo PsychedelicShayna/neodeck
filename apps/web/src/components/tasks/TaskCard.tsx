@@ -113,6 +113,17 @@ export function TaskCardBody({ task, lifted }: { task: Task; lifted: boolean }) 
 					{truncate(task.body.split(/\r?\n/)[0] ?? "", 120)}
 				</div>
 			) : null}
+			{task.run ? (
+				<div className="mt-2 border-t border-line pt-1 text-xs text-ink-3">
+					<div className="font-mono text-2xs">Agent · {task.run.status}</div>
+					{task.run.outcome ? (
+						<p className="mt-1 line-clamp-3 whitespace-pre-wrap">{task.run.outcome}</p>
+					) : null}
+					{task.run.error ? (
+						<p className="mt-1 line-clamp-3 whitespace-pre-wrap text-danger">{task.run.error}</p>
+					) : null}
+				</div>
+			) : null}
 		</div>
 	);
 }

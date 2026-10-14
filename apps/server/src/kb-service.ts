@@ -23,10 +23,11 @@
  * fresh data after `rebuildIndex()` is called by the watcher.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createInterface } from "node:readline";
 
 import YAML from "yaml";
 
@@ -148,16 +149,22 @@ const INLINE_CODE_RE = /`[^`\n]+`/g;
 const GRAPH_MAX_NODES = 10_000;
 
 interface GraphCache {
+	generation: number;
 	nodes: KbGraphNode[];
 	edges: KbGraphEdge[];
 	backlinks: Map<string, KbBacklink[]>;
 	unresolvedCount: number;
+	byPath: Map<string, KbGraphNode>;
+	/** Literal substring candidate index; stores note paths, never note bodies. */
+	bodyPostings: Map<string, Set<string>>;
 }
 interface FileRecord {
 	relPath: string; // forward-slash kb-relative
 	absPath: string;
 	dir: string; // forward-slash relative dir, "" for root
 	stem: string; // lowercase filename stem (no .md)
+	title: string;
+	tags: string[];
 	size: number;
 	mtime: Date;
 }
@@ -193,6 +200,8 @@ export class KbService {
 	private indexReady = false;
 	private indexPromise: Promise<void> | undefined;
 	private graphCache: GraphCache | undefined;
+	private graphPromise: Promise<GraphCache> | undefined;
+	private generation = 0;
 	/** `.kbignore` rules; undefined until first use after an invalidate. */
 	private ignoreRules: KbIgnore | undefined;
 
@@ -203,13 +212,13 @@ export class KbService {
 
 	/** Lazy build on first request; subsequent calls reuse the cache. */
 	async ensureIndex(): Promise<void> {
-		if (this.indexReady) return;
-		if (this.indexPromise) return this.indexPromise;
-		this.indexPromise = this.buildIndex();
-		try {
-			await this.indexPromise;
-		} finally {
-			this.indexPromise = undefined;
+		while (!this.indexReady) {
+			const pending = this.indexPromise ??= this.buildIndex();
+			try {
+				await pending;
+			} finally {
+				if (this.indexPromise === pending) this.indexPromise = undefined;
+			}
 		}
 	}
 
@@ -221,6 +230,7 @@ export class KbService {
 	invalidate(): void {
 		this.indexReady = false;
 		this.graphCache = undefined;
+		this.generation++;
 		this.ignoreRules = undefined;
 	}
 
@@ -236,9 +246,8 @@ export class KbService {
 	}
 
 	/**
-	 * Bootstrap status for the welcome panel: does the kb root exist, and
-	 * how many indexed files does it have? An empty/missing kb triggers the
-	 * "Create starter kb" CTA in the web UI.
+	 * Status for the read-only welcome panel: does the kb root exist, and
+	 * how many indexed files does it have?
 	 */
 	async getStatus(): Promise<{ root: string; exists: boolean; fileCount: number }> {
 		await this.ensureIndex();
@@ -249,54 +258,6 @@ export class KbService {
 		};
 	}
 
-	/**
-	 * Create the kb root (if missing) and write a starter README.md. Refuses
-	 * to clobber: if the root already has indexed markdown content, the call
-	 * no-ops and returns the existing status. Otherwise scaffolds README.md
-	 * and rebuilds the index so the UI sees it on the next read.
-	 */
-	async initialize(): Promise<{
-		root: string;
-		exists: boolean;
-		fileCount: number;
-		created: boolean;
-		refusedReason?: string;
-	}> {
-		const beforeExists = existsSync(this.root);
-		if (beforeExists) {
-			await this.ensureIndex();
-			if (this.records.length > 0) {
-				return {
-					root: this.root,
-					exists: true,
-					fileCount: this.records.length,
-					created: false,
-					refusedReason: "kb root already has content; init is a no-op",
-				};
-			}
-		}
-
-		try {
-			await mkdir(this.root, { recursive: true });
-		} catch (err) {
-			log.error(`mkdir failed at ${this.root}`, err);
-			throw err;
-		}
-		const readme = path.join(this.root, "README.md");
-		if (!existsSync(readme)) {
-			const today = new Date().toISOString().slice(0, 10);
-			await writeFile(readme, renderStarterReadme(today), "utf8");
-		}
-
-		this.invalidate();
-		await this.ensureIndex();
-		return {
-			root: this.root,
-			exists: true,
-			fileCount: this.records.length,
-			created: true,
-		};
-	}
 
 	/**
 	 * Return a single directory listing. `subpath` is forward-slash relative
@@ -312,6 +273,7 @@ export class KbService {
 		if (this.pathIsExcluded(cleanRel, true)) return undefined;
 		const absDir = this.resolveAbs(cleanRel);
 		if (!absDir) return undefined;
+		if (!(await this.safeExisting(absDir))) return undefined;
 		try {
 			const st = await stat(absDir);
 			if (!st.isDirectory()) return undefined;
@@ -397,6 +359,7 @@ export class KbService {
 		if (this.pathIsExcluded(cleanRel, false)) return undefined;
 		const abs = this.resolveAbs(cleanRel);
 		if (!abs) return undefined;
+		if (!(await this.safeExisting(abs))) return undefined;
 
 		let raw: string;
 		let st;
@@ -514,19 +477,14 @@ export class KbService {
 
 	/**
 	 * Full wiki-link graph + frontmatter-tag aggregation. Built lazily on
-	 * first request and cached until the watcher invalidates the index. For
-	 * the v1 scale (~600 visible nodes) the build cost is dominated by file
-	 * reads — runs in under a second even cold.
+	 * first request and cached until the watcher invalidates the index.
+	 * Initialization reads visible bodies once, also building search postings.
 	 *
 	 * Caps the response at GRAPH_MAX_NODES; sets `truncated: true` when the
 	 * cap fires so the UI can warn the user.
 	 */
 	async getGraph(): Promise<KbGraphResponse> {
-		await this.ensureIndex();
-		if (!this.graphCache) {
-			this.graphCache = await this.buildGraph();
-		}
-		return shapeGraphResponse(this.graphCache);
+		return shapeGraphResponse(await this.indexedGraph());
 	}
 
 	async getBacklinks(subpath: string): Promise<KbBacklinksResponse | undefined> {
@@ -535,10 +493,8 @@ export class KbService {
 		if (!cleanRel) return undefined;
 		if (this.pathIsExcluded(cleanRel, false)) return undefined;
 		if (!this.byRelPath.has(cleanRel)) return undefined;
-		if (!this.graphCache) {
-			this.graphCache = await this.buildGraph();
-		}
-		const backlinks = this.graphCache.backlinks.get(cleanRel) ?? [];
+		const graph = await this.indexedGraph();
+		const backlinks = graph.backlinks.get(cleanRel) ?? [];
 		return { path: cleanRel, backlinks };
 	}
 
@@ -550,133 +506,130 @@ export class KbService {
 	 * count on neither side.
 	 */
 	async getOrphanCensus(): Promise<KbOrphanCensus> {
-		await this.ensureIndex();
-		if (!this.graphCache) {
-			this.graphCache = await this.buildGraph();
-		}
+		const graph = await this.indexedGraph();
 		const linked = new Set<string>();
 		const outbound = new Map<string, number>();
-		for (const edge of this.graphCache.edges) {
+		for (const edge of graph.edges) {
 			if (edge.source === edge.target) continue;
 			linked.add(edge.target);
 			outbound.set(edge.source, (outbound.get(edge.source) ?? 0) + 1);
 		}
-		const orphans = this.graphCache.nodes
+		const orphans = graph.nodes
 			.filter((node) => !linked.has(node.path))
 			.map((node) => ({ path: node.path, title: node.title, outbound: outbound.get(node.path) ?? 0 }))
 			.sort((a, b) => a.path.localeCompare(b.path));
 		return {
 			root: this.root,
-			notes: this.graphCache.nodes.length,
+			notes: graph.nodes.length,
 			orphans,
-			unresolvedLinks: this.graphCache.unresolvedCount,
+			unresolvedLinks: graph.unresolvedCount,
 		};
 	}
 
 	/**
-	 * Hybrid scored search across the indexed kb. Cheap enough at v1 scale
-	 * (~1k files) to run end-to-end on every request; we don't pre-build an
-	 * inverted index yet. Scoring layers:
+	 * Hybrid scored search across cached metadata and literal body candidates.
+	 * Scoring layers:
 	 *
 	 *   stem   filename matches the query (100 exact, 80 prefix, 60 contains)
 	 *   title  frontmatter `name` matches (60 exact, 40 prefix, 25 contains)
 	 *   tag    one of `frontmatter.tags` matches (50 exact, 20 contains)
 	 *   body   substring hit in the body (10 base + 1 per extra hit, capped)
 	 *
-	 * Body matches read each file once (this can grow expensive — at 1k
-	 * files of 9KB avg that's 9MB which still runs in ~50ms cold; we'll
-	 * revisit if the kb grows past 5k or queries get hammered). The first
-	 * body hit is centered into a 160-char snippet.
+	 * Body candidates come from a generation-scoped 1/2/3-code-unit inverted
+	 * index built during graph initialization. Only candidates are reopened
+	 * to verify literal hits and produce the original 160-char snippet.
 	 */
-	async search(query: string, limit: number): Promise<KbSearchResponse> {
-		await this.ensureIndex();
-		const q = query.trim().toLowerCase();
-		if (!q) return { query, results: [], totalMatches: 0, truncated: false };
-		const cap = Math.max(1, Math.min(limit | 0 || 20, 100));
+	async search(query: string, limit: number, entryOnly = false): Promise<KbSearchResponse> {
+		for (;;) {
+			await this.ensureIndex();
+			const q = query.trim().toLowerCase();
+			if (!q) return { query, results: [], totalMatches: 0, truncated: false };
+			const cap = Math.max(1, Math.min(limit | 0 || 20, 100));
+			// Full-text and reverse navigation share one single-flight initialization.
+			const graph = entryOnly ? this.graphCache : await this.indexedGraph();
+			const generation = this.generation;
+			if (graph && graph.generation !== generation) continue;
 
-		type Acc = { score: number; matchKind: KbSearchMatchKind; snippet: string };
-		const scored = new Map<string, Acc>();
+			type Acc = { score: number; matchKind: KbSearchMatchKind; snippet: string };
+			const scored = new Map<string, Acc>();
 
-		const bump = (relPath: string, score: number, kind: KbSearchMatchKind, snippet: string): void => {
-			const prev = scored.get(relPath);
-			if (!prev) {
-				scored.set(relPath, { score, matchKind: kind, snippet });
-				return;
+			const bump = (relPath: string, score: number, kind: KbSearchMatchKind, snippet: string): void => {
+				const prev = scored.get(relPath);
+				if (!prev) {
+					scored.set(relPath, { score, matchKind: kind, snippet });
+					return;
+				}
+				prev.score += score;
+				// Promote to a stronger match kind if this one outranks the existing.
+				if (KIND_RANK[kind] < KIND_RANK[prev.matchKind]) {
+					prev.matchKind = kind;
+				}
+				if (!prev.snippet && snippet) prev.snippet = snippet;
+			};
+
+			// Pass 1 — stem / title / tag against the cached index. No disk reads.
+			for (const r of this.records) {
+				const stem = r.stem; // already lowercased
+				if (stem === q) bump(r.relPath, 100, "stem", "");
+				else if (stem.startsWith(q)) bump(r.relPath, 80, "stem", "");
+				else if (stem.includes(q)) bump(r.relPath, 60, "stem", "");
 			}
-			prev.score += score;
-			// Promote to a stronger match kind if this one outranks the existing.
-			if (KIND_RANK[kind] < KIND_RANK[prev.matchKind]) {
-				prev.matchKind = kind;
-			}
-			if (!prev.snippet && snippet) prev.snippet = snippet;
-		};
 
-		// Pass 1 — stem / title / tag against the cached index. No disk reads.
-		for (const r of this.records) {
-			const stem = r.stem; // already lowercased
-			if (stem === q) bump(r.relPath, 100, "stem", "");
-			else if (stem.startsWith(q)) bump(r.relPath, 80, "stem", "");
-			else if (stem.includes(q)) bump(r.relPath, 60, "stem", "");
+			// Header metadata is indexed once; entry searches never open note bodies.
+			for (const node of this.records) {
+				const title = node.title.toLowerCase();
+				if (title === q) bump(node.relPath, 60, "title", "");
+				else if (title.startsWith(q)) bump(node.relPath, 40, "title", "");
+				else if (title.includes(q)) bump(node.relPath, 25, "title", "");
+				for (const tag of node.tags) {
+					const t = tag.toLowerCase();
+					if (t === q) bump(node.relPath, 50, "tag", "");
+					else if (t.includes(q)) bump(node.relPath, 20, "tag", "");
+				}
+			}
+
+			// Intersect postings, not every body. Short queries use exact 1/2-unit
+			// postings; longer queries verify trigram candidates against the file.
+			for (const relPath of entryOnly ? [] : bodyCandidates(graph!.bodyPostings, q)) {
+				const r = this.byRelPath.get(relPath);
+				if (!r || !(await this.safeExisting(r.absPath))) continue;
+				let raw: string;
+				try { raw = await readFile(r.absPath, "utf8"); } catch { continue; }
+				const lc = raw.toLowerCase();
+				const first = lc.indexOf(q);
+				if (first < 0) continue;
+				let extra = 0;
+				let cursor = lc.indexOf(q, first + q.length);
+				while (cursor >= 0 && extra < 20) {
+					extra += 1;
+					cursor = lc.indexOf(q, cursor + q.length);
+				}
+				bump(r.relPath, 10 + extra, "body", makeSnippet(raw, first, q.length));
+			}
+
+			// Materialize results sorted by score desc, then path asc for stability.
+			const all: KbSearchResult[] = [];
+			for (const [relPath, acc] of scored) {
+				const record = this.byRelPath.get(relPath);
+				if (!record) continue;
+				const node = graph?.byPath.get(relPath);
+				const dir = record.dir.split("/")[0] ?? "";
+				all.push({
+					path: relPath,
+					title: node?.title ?? record.title,
+					dir,
+					score: acc.score,
+					matchKind: acc.matchKind,
+					snippet: acc.snippet,
+				});
+			}
+			all.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+			// A watcher event during candidate reads must not publish mixed generations.
+			if (generation !== this.generation) continue;
+			const truncated = all.length > cap;
+			const results = truncated ? all.slice(0, cap) : all;
+			return { query, results, totalMatches: all.length, truncated };
 		}
-
-		// Pass 2 — title (frontmatter.name) and tags via the graph cache nodes.
-		if (!this.graphCache) this.graphCache = await this.buildGraph();
-		for (const node of this.graphCache.nodes) {
-			const title = node.title.toLowerCase();
-			if (title === q) bump(node.path, 60, "title", "");
-			else if (title.startsWith(q)) bump(node.path, 40, "title", "");
-			else if (title.includes(q)) bump(node.path, 25, "title", "");
-			for (const tag of node.tags) {
-				const t = tag.toLowerCase();
-				if (t === q) bump(node.path, 50, "tag", "");
-				else if (t.includes(q)) bump(node.path, 20, "tag", "");
-			}
-		}
-
-		// Pass 3 — body substring with snippet. Sequential reads (parallel
-		// here doesn't help much: the index is already in OS page cache from
-		// the graph build).
-		for (const r of this.records) {
-			let raw: string;
-			try {
-				raw = await readFile(r.absPath, "utf8");
-			} catch {
-				continue;
-			}
-			const lc = raw.toLowerCase();
-			const first = lc.indexOf(q);
-			if (first < 0) continue;
-			// Count additional hits (capped) for tiebreak signal.
-			let extra = 0;
-			let cursor = lc.indexOf(q, first + q.length);
-			while (cursor >= 0 && extra < 20) {
-				extra += 1;
-				cursor = lc.indexOf(q, cursor + q.length);
-			}
-			const snippet = makeSnippet(raw, first, q.length);
-			bump(r.relPath, 10 + extra, "body", snippet);
-		}
-
-		// Materialize results sorted by score desc, then path asc for stability.
-		const all: KbSearchResult[] = [];
-		for (const [relPath, acc] of scored) {
-			const record = this.byRelPath.get(relPath);
-			if (!record) continue;
-			const node = this.graphCache?.nodes.find((n) => n.path === relPath);
-			const dir = record.dir.split("/")[0] ?? "";
-			all.push({
-				path: relPath,
-				title: node?.title ?? record.stem,
-				dir,
-				score: acc.score,
-				matchKind: acc.matchKind,
-				snippet: acc.snippet,
-			});
-		}
-		all.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-		const truncated = all.length > cap;
-		const results = truncated ? all.slice(0, cap) : all;
-		return { query, results, totalMatches: all.length, truncated };
 	}
 
 	/**
@@ -687,36 +640,41 @@ export class KbService {
 	 *
 	 * Unresolved wikilinks bump the global counter only; they don't get a
 	 * placeholder node (the UI can prompt-create via the existing flow).
+	 * Complete reverse navigation necessarily reads all visible bodies once
+	 * per generation: an inbound link can occur in any note. The same pass
+	 * builds search postings; subsequent hops reuse edges, not body content.
 	 */
 	private async buildGraph(): Promise<GraphCache> {
 		const t0 = performance.now();
+		const generation = this.generation;
+		const records = this.records;
 		const nodes = new Map<string, KbGraphNode>();
 		const edges: KbGraphEdge[] = [];
 		const backlinks = new Map<string, KbBacklink[]>();
 		const edgeSeen = new Set<string>();
+		const bodyPostings = new Map<string, Set<string>>();
 		let unresolvedCount = 0;
 
 		// Pass 1: seed nodes (so unreached files still appear as orphans).
-		for (const r of this.records) {
+		for (const r of records) {
 			const dir = r.dir.split("/")[0] ?? "";
 			nodes.set(r.relPath, {
 				id: r.relPath,
 				path: r.relPath,
-				title: r.stem,
+				title: r.title,
 				dir,
 				inbound: 0,
 				outbound: 0,
-				tags: [],
+				tags: r.tags,
 			});
 		}
 
-		// Pass 2: read each file in parallel batches, parse frontmatter (for
-		// tags + title), extract wikilinks. Chunked at 32 to avoid opening
-		// too many fds on Windows where ENFILE shows up around 200+. At v1
-		// scale (805 files) this brings cold build from ~10s down to ~1s.
+		// Read each file in parallel batches; parse metadata and wikilinks and
+		// index literal search candidates. Limit concurrent full-body reads to
+		// 32 rather than opening an unbounded number of files.
 		const CHUNK = 32;
-		for (let i = 0; i < this.records.length; i += CHUNK) {
-			const chunk = this.records.slice(i, i + CHUNK);
+		for (let i = 0; i < records.length; i += CHUNK) {
+			const chunk = records.slice(i, i + CHUNK);
 			const reads = await Promise.all(
 				chunk.map((r) =>
 					readFile(r.absPath, "utf8").then(
@@ -727,6 +685,7 @@ export class KbService {
 			);
 			for (const { r, raw } of reads) {
 				if (raw === undefined) continue;
+				indexBody(bodyPostings, r.relPath, raw.toLowerCase());
 			const { frontmatter, body } = parseFrontmatter(raw);
 			const node = nodes.get(r.relPath);
 			if (!node) continue;
@@ -766,42 +725,83 @@ export class KbService {
 		const ms = (performance.now() - t0).toFixed(1);
 		log.info(`built kb graph: ${nodes.size} nodes, ${edges.length} edges, ${unresolvedCount} unresolved (${ms}ms)`);
 		return {
+			generation,
 			nodes: Array.from(nodes.values()),
 			edges,
 			backlinks,
 			unresolvedCount,
+			byPath: nodes,
+			bodyPostings,
 		};
 	}
 	// ─── internals ───────────────────────────────────────────────────────
+	/** Reuse one graph build across concurrent readers and navigation hops. */
+	private async indexedGraph(): Promise<GraphCache> {
+		for (;;) {
+			await this.ensureIndex();
+			if (this.graphCache) return this.graphCache;
+			const pending = this.graphPromise ??= this.buildGraph();
+			try {
+				const graph = await pending;
+				if (graph.generation !== this.generation) continue;
+				return this.graphCache = graph;
+			} finally {
+				if (this.graphPromise === pending) this.graphPromise = undefined;
+			}
+		}
+	}
+
+	async getLinks(subpath: string): Promise<{ path: string; links: KbWikilink[] } | undefined> {
+		const note = await this.getFile(subpath);
+		return note ? { path: note.path, links: note.outgoingLinks } : undefined;
+	}
+
+	/** Existing paths must resolve inside the vault; symlink escapes are not notes. */
+	private async safeExisting(abs: string): Promise<boolean> {
+		try {
+			const root = await realpath(this.root);
+			const target = await realpath(abs);
+			if (target !== root && !target.startsWith(`${root}${path.sep}`)) return false;
+			const rel = normalizeRel(path.relative(root, target));
+			return !this.pathIsExcluded(rel, (await stat(target)).isDirectory());
+		} catch {
+			return false;
+		}
+	}
 
 	private async buildIndex(): Promise<void> {
 		const t0 = performance.now();
-		this.records = [];
-		this.byRelPath.clear();
-		this.byStem.clear();
+		const generation = this.generation;
+		const records: FileRecord[] = [];
+		const byRelPath = new Map<string, FileRecord>();
+		const byStem = new Map<string, FileRecord[]>();
 
 		if (!existsSync(this.root)) {
 			log.warn(`kb root does not exist: ${this.root}`);
-			this.indexReady = true;
+			if (generation === this.generation) { this.records = records; this.byRelPath = byRelPath; this.byStem = byStem; this.indexReady = true; }
 			return;
 		}
 
 		const visited = new Set<string>();
-		await this.walk(this.root, "", visited);
+		await this.walk(this.root, "", visited, records);
 
-		for (const r of this.records) {
-			this.byRelPath.set(r.relPath, r);
-			const list = this.byStem.get(r.stem);
+		for (const r of records) {
+			byRelPath.set(r.relPath, r);
+			const list = byStem.get(r.stem);
 			if (list) list.push(r);
-			else this.byStem.set(r.stem, [r]);
+			else byStem.set(r.stem, [r]);
 		}
 
 		const ms = (performance.now() - t0).toFixed(1);
-		log.info(`indexed ${this.records.length} md files under ${this.root} in ${ms}ms`);
+		log.info(`indexed ${records.length} md files under ${this.root} in ${ms}ms`);
+		if (generation !== this.generation) return;
+		this.records = records;
+		this.byRelPath = byRelPath;
+		this.byStem = byStem;
 		this.indexReady = true;
 	}
 
-	private async walk(absDir: string, relDir: string, visited: Set<string>): Promise<void> {
+	private async walk(absDir: string, relDir: string, visited: Set<string>, records: FileRecord[]): Promise<void> {
 		let real;
 		try {
 			real = await realpath(absDir);
@@ -809,6 +809,7 @@ export class KbService {
 			return;
 		}
 		if (visited.has(real)) return;
+		if (!(await this.safeExisting(absDir))) return;
 		visited.add(real);
 
 		let entries;
@@ -828,7 +829,7 @@ export class KbService {
 				try {
 					const st = await stat(abs);
 					if (st.isDirectory() && !this.rules().ignoresEntry(rel, true)) {
-						await this.walk(abs, rel, visited);
+						await this.walk(abs, rel, visited, records);
 					}
 				} catch {
 					// stat failure on symlink target; skip silently
@@ -843,11 +844,15 @@ export class KbService {
 			try {
 				const st = await stat(abs);
 				const stem = entry.name.slice(0, -3).toLowerCase();
-				this.records.push({
+				const frontmatter = await readHeader(abs);
+				const name = frontmatter.name ?? frontmatter.title;
+				records.push({
 					relPath: rel,
 					absPath: abs,
 					dir: relDir,
 					stem,
+					title: typeof name === "string" && name.trim() ? name.trim() : stem,
+					tags: Array.isArray(frontmatter.tags) ? frontmatter.tags.filter((tag): tag is string => typeof tag === "string") : [],
 					size: st.size,
 					mtime: st.mtime,
 				});
@@ -903,7 +908,7 @@ export class KbService {
 		const abs = rel ? path.join(this.root, rel) : this.root;
 		const resolved = path.resolve(abs);
 		const rootResolved = path.resolve(this.root);
-		if (!resolved.startsWith(rootResolved)) return undefined;
+		if (resolved !== rootResolved && !resolved.startsWith(`${rootResolved}${path.sep}`)) return undefined;
 		return resolved;
 	}
 
@@ -1052,6 +1057,49 @@ export class KbService {
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
+/**
+ * At most 3L posting memberships for L lowercased UTF-16 units across the
+ * corpus (duplicates collapse per note). No bodies or per-query results are
+ * retained. Indexing is O(L), alongside the required reverse-edge body pass.
+ */
+function indexBody(postings: Map<string, Set<string>>, relPath: string, text: string): void {
+	for (let i = 0; i < text.length; i++) {
+		for (let length = 1; length <= 3 && i + length <= text.length; length++) {
+			const gram = text.slice(i, i + length);
+			let paths = postings.get(gram);
+			if (!paths) {
+				paths = new Set<string>();
+				postings.set(gram, paths);
+			}
+			paths.add(relPath);
+		}
+	}
+}
+
+function bodyCandidates(postings: Map<string, Set<string>>, query: string): string[] {
+	const length = Math.min(3, query.length);
+	const grams = new Set<string>();
+	const lists: Set<string>[] = [];
+	for (let i = 0; i + length <= query.length; i++) {
+		const gram = query.slice(i, i + length);
+		if (grams.has(gram)) continue;
+		grams.add(gram);
+		const paths = postings.get(gram);
+		if (!paths) return [];
+		lists.push(paths);
+	}
+	// Enumerate the smallest posting, not the inventory; retain only paths
+	// present in every posting. Ordering/occurrences are verified on disk.
+	lists.sort((a, b) => a.size - b.size);
+	const smallest = lists[0];
+	if (!smallest) return [];
+	const candidates: string[] = [];
+	for (const relPath of smallest) {
+		if (lists.every((paths) => paths.has(relPath))) candidates.push(relPath);
+	}
+	return candidates;
+}
+
 function normalizeRel(p: string): string {
 	if (!p) return "";
 	// Strip leading/trailing slashes, collapse repeated slashes, force forward.
@@ -1061,6 +1109,26 @@ function normalizeRel(p: string): string {
 function joinRel(parent: string, child: string): string {
 	if (!parent) return child;
 	return `${parent}/${child}`;
+}
+
+/** Read only a note's leading YAML, never its body, while building entry metadata. */
+async function readHeader(abs: string): Promise<Record<string, unknown>> {
+	const stream = createReadStream(abs, { encoding: "utf8", highWaterMark: 4096 });
+	const lines = createInterface({ input: stream, crlfDelay: Infinity });
+	const header: string[] = [];
+	try {
+		for await (const line of lines) {
+			if (header.length === 0 && line !== "---") return {};
+			header.push(line);
+			if (header.length > 1 && line.startsWith("---")) {
+				return parseFrontmatter(`${header.join("\n")}\n`).frontmatter;
+			}
+		}
+		return {};
+	} finally {
+		lines.close();
+		stream.destroy();
+	}
 }
 
 /**
@@ -1203,57 +1271,6 @@ function extractSnippet(body: string, raw: string): string {
 	return (from > 0 ? "…" : "") + line.slice(from, to) + (to < line.length ? "…" : "");
 }
 
-/**
- * Initial README rendered when a fresh user runs `init`. Includes the
- * frontmatter convention so the first file already demonstrates the shape.
- * The body explains the cockpit's relationship to omp memory + the
- * progressive-disclosure model so the user has the mental hooks before
- * they start authoring.
- */
-function renderStarterReadme(today: string): string {
-	return [
-		"---",
-		"type: knowledge",
-		`created: ${today}`,
-		`updated: ${today}`,
-		"tags: [meta, readme]",
-		"---",
-		"",
-		"# Welcome to your KB",
-		"",
-		"This is a fresh knowledge base, scaffolded by npi-deck. The cockpit reads",
-		"this folder (`~/kb` by default; overridable via `NPI_DECK_KB_ROOT`) as a",
-		"Karpathy-style llm-wiki: hand-tended markdown with frontmatter metadata and",
-		"`[[wiki-links]]` between articles.",
-		"",
-		"## How it works",
-		"",
-		"- **Each file** is a markdown article with YAML frontmatter at the top.",
-		"  The cockpit parses `type`, `created`, `updated`, and `tags` automatically.",
-		"- **Wiki-links** like `[[some-other-file]]` resolve by filename stem. Use",
-		"  `[[dir/path]]` for explicit paths and `[[target|label]]` to rename the",
-		"  rendered text.",
-		"- **Hubs** are index files (e.g. `tools/index.md`) that collect related",
-		"  articles in one place. They keep your wiki from becoming a sea of",
-		"  orphan notes.",
-		"",
-		"## Where to start",
-		"",
-		"1. Drop a file into any subdirectory of this kb. The tree refreshes live.",
-		"2. Reference it from this README with `[[your-new-file]]`.",
-		"3. Open the **Graph** tab to see the constellation grow.",
-		"",
-		"## What this is NOT",
-		"",
-		"This kb is *not* the same as omp's session memory. omp's memory backends",
-		"(`local` rolling summaries, `hindsight` vector store) handle short-term",
-		"recall during a session; this kb is your long-term, hand-tended knowledge.",
-		"They complement each other.",
-		"",
-		"Happy authoring.",
-		"",
-	].join("\n");
-}
 
 export function resolveKbRoot(): string {
 	const fromEnv = process.env.NPI_DECK_KB_ROOT;

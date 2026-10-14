@@ -20,6 +20,7 @@ import type {
 
 import { logger } from "./log.ts";
 import { deriveLabel } from "./workspace-label.ts";
+import type { CardAgentRunner } from "./card-agents.ts";
 import {
 	createState,
 	createTask,
@@ -38,7 +39,7 @@ import {
 
 const log = logger("routes:tasks");
 
-export function buildTasksRouter(): Hono {
+export function buildTasksRouter(cardAgents?: CardAgentRunner): Hono {
 	const app = new Hono();
 
 	// ─── Tasks ─────────────────────────────────────────────────────────────
@@ -86,6 +87,19 @@ export function buildTasksRouter(): Hono {
 		const task = getTask(c.req.param("id"));
 		if (!task) return c.json({ error: "not found" }, 404);
 		return c.json(task);
+	});
+
+	app.post("/tasks/:id/assign", (c) => {
+		if (!cardAgents) return c.json({ error: "Card agent runner unavailable" }, 503);
+		if (!getTask(c.req.param("id"))) return c.json({ error: "not found" }, 404);
+		try { return c.json(cardAgents.assign(c.req.param("id")), 202); }
+		catch (error) { return c.json({ error: String(error) }, 400); }
+	});
+
+	app.post("/tasks/:id/cancel", async (c) => {
+		if (!cardAgents) return c.json({ error: "Card agent runner unavailable" }, 503);
+		const run = await cardAgents.cancel(c.req.param("id"));
+		return run ? c.json(run) : c.json({ error: "No card assignment" }, 404);
 	});
 
 	app.patch("/tasks/:id", async (c) => {
