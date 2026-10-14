@@ -15,10 +15,19 @@ let kbRoot: string;
 let router: InternalUrlRouter;
 
 beforeAll(async () => {
-	await loadBackend();
+	const began = performance.now();
+	console.error("DIAG186 kb beforeAll enter", JSON.stringify({ pid: process.pid, at: Date.now() }));
+	try {
+		await loadBackend();
+		console.error("DIAG186 kb beforeAll complete", JSON.stringify({ pid: process.pid, elapsedMs: performance.now() - began, at: Date.now() }));
+	} catch (error) {
+		console.error("DIAG186 kb beforeAll reject", JSON.stringify({ pid: process.pid, elapsedMs: performance.now() - began, error: String(error), at: Date.now() }));
+		throw error;
+	}
 });
 
 beforeEach(() => {
+	console.error("DIAG186 kb beforeEach enter", JSON.stringify({ pid: process.pid, at: Date.now() }));
 	saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 	kbRoot = mkdtempSync(path.join(os.tmpdir(), "npi-deck-kb-proto-"));
 	process.env.NPI_DECK_KB_ROOT = kbRoot;
@@ -45,14 +54,17 @@ beforeEach(() => {
 	sdk().InternalUrlRouter.resetForTests();
 	router = sdk().InternalUrlRouter.instance();
 	router.register(new KbProtocolHandler());
+	console.error("DIAG186 kb beforeEach complete", JSON.stringify({ pid: process.pid, kbRoot, at: Date.now() }));
 });
 
 afterEach(() => {
+	console.error("DIAG186 kb afterEach enter", JSON.stringify({ pid: process.pid, kbRoot, at: Date.now() }));
 	sdk().InternalUrlRouter.resetForTests();
 	for (const k of ENV_KEYS) {
 		if (saved[k] === undefined) delete process.env[k];
 		else process.env[k] = saved[k];
 	}
+	console.error("DIAG186 kb afterEach complete", JSON.stringify({ pid: process.pid, kbRoot, at: Date.now() }));
 });
 
 describe("kb:// resolution", () => {

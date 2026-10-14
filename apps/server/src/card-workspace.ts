@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readdirSync, realpathSync, copyFileSync, writeFileSync, rmSync, rmdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, realpathSync, copyFileSync, writeFileSync, rmSync, rmdirSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { spawnOwned, spawnOwnedSync, terminateOwned } from "./owned-process.ts";
 import type { CardRunOwnership } from "./db/card-runs.ts";
@@ -18,12 +18,22 @@ export async function cardGit(cwd: string, args: string[], signal?: AbortSignal)
 	} finally { signal?.removeEventListener("abort", abort); }
 }
 
+function diagnosticDirectory(directory: string) {
+	try {
+		const stat = statSync(directory, { bigint: true });
+		return { dev: String(stat.dev), ino: String(stat.ino), normalized: path.normalize(directory), native: realpathSync.native(directory) };
+	} catch (error) { return { error: String(error) }; }
+}
+
 export async function validateLinkedWorktree(linked: string, signal?: AbortSignal): Promise<string> {
 	if (!path.isAbsolute(linked)) throw new Error("linked worktree must be an absolute path");
 	const cwd = realpathSync(linked);
-	const root = realpathSync(await cardGit(cwd, ["rev-parse", "--show-toplevel"], signal));
+	const rawRoot = await cardGit(cwd, ["rev-parse", "--show-toplevel"], signal);
+	const root = realpathSync(rawRoot);
+	console.error("DIAG186 linked root", JSON.stringify({ pid: process.pid, linked, cwd, rawRoot, root, relative: path.relative(root, cwd), cwdMetadata: diagnosticDirectory(cwd), rootMetadata: diagnosticDirectory(root) }));
 	if (root !== cwd) throw new Error("linked worktree must name the git worktree root");
 	const registered = await cardGit(cwd, ["worktree", "list", "--porcelain", "-z"], signal);
+	console.error("DIAG186 registered roots", JSON.stringify({ pid: process.pid, registered }));
 	for (const entry of registered.split("\0")) {
 		if (!entry.startsWith("worktree ")) continue;
 		const directory = entry.slice("worktree ".length);

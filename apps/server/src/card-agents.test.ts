@@ -156,7 +156,14 @@ if (!fixtureRoot) {
    const gate = tokenGate(title);
    const card = task ?? await create(title, { worktree: linked, "read-only": readOnly }, project);
    const run = owner.assign(card.id);
-   const observed = await waitFor(() => observations.find(entry => entry.agentId === run.id), `native bearer for ${title}`);
+   let observed: (typeof observations)[number];
+   try {
+    observed = await waitFor(() => observations.find(entry => entry.agentId === run.id), `native bearer for ${title}`);
+   } catch (error) {
+    const current = getTask(card.id)?.run;
+    console.error("DIAG186 bearer admission", JSON.stringify({ pid: process.pid, title, expectedRunId: run.id, run: current && { id: current.id, status: current.status, error: current.error, cwd: current.cwd, ownedWorktree: current.ownedWorktree }, observationsForRun: observations.filter(entry => entry.agentId === run.id).length }));
+    throw error;
+   }
    await waitFor(() => gate.reached, `native KB result for ${title}`);
    expect(observed.status).toBe(200);
    expect(observed.agentId).toBe(run.id); expect(observed.readOnly).toBe(readOnly); expect(observed.projectCwd).toBe(project);

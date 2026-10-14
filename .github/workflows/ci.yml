@@ -1,47 +1,23 @@
 name: CI
 
+# Disposable diagnostic only; never merge this branch into any product branch.
 on:
-  push:
-    branches: [main, nightly]
-  pull_request:
-    branches: [main, nightly]
   workflow_dispatch:
 
-# Cancel in-flight runs on the same ref when a new push lands. Keeps the
-# matrix from queueing duplicate work during rapid push sequences.
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: read
 
 jobs:
-  # ─── Cross-platform matrix: typecheck + test + web build ──────────────────
-  #
-  # All three OSes run the same gates against the same Bun version. Anything
-  # that diverges per-platform belongs in the source, not here — the matrix
-  # exists to catch divergence early.
-  matrix:
-    name: ${{ matrix.os }} · bun ${{ matrix.bun }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        bun: ["1.3.14"]
+  windows-cause:
+    runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: ${{ matrix.bun }}
-
+          bun-version: "1.3.14"
       - name: bun install (frozen)
         run: bun install --frozen-lockfile
-
-      # The server's program includes NeoPi's sources (tsconfig.neopi.json), and its tests load a
-      # real NeoPi backend. scripts/neopi-setup.ts prepares the tree pinned in neopi.pin: frozen
-      # install, a native addon built from the tree's own sources and verified against the version
-      # sentinel, backend registration in NPI_DECK_HOME, and tsconfig.neopi.json. The source clone
-      # and NPI_DECK_HOME live under RUNNER_TEMP so `bun test` never discovers NeoPi's own tests.
       - name: fetch NeoPi at neopi.pin
         shell: bash
         run: |
@@ -53,15 +29,40 @@ jobs:
           git -C "$src" checkout -q --detach FETCH_HEAD
           echo "NPI_DECK_NEOPI_SOURCE=$src" >> "$GITHUB_ENV"
           echo "NPI_DECK_HOME=$RUNNER_TEMP/npi-deck-home" >> "$GITHUB_ENV"
-
-      - name: prepare NeoPi backend (install, native addon, tsconfig)
+      - name: prepare pinned native backend
         run: bun scripts/neopi-setup.ts --build-native
-
-      - name: typecheck (all workspaces)
-        run: bun run typecheck
-
-      - name: test (all workspaces)
-        run: bun test
-
-      - name: web build
-        run: bun --cwd apps/web run build
+      - name: isolate diagnostic home and preserve backend selection
+        shell: bash
+        run: |
+          pin="$(tr -d '[:space:]' < neopi.pin)"
+          root="$RUNNER_TEMP/windows186"
+          mkdir -p "$root/home" "$root/agent" "$root/deck" "$root/proof"
+          echo "NPI_DECK_BACKEND=$RUNNER_TEMP/npi-deck-home/neopi/$pin" >> "$GITHUB_ENV"
+          echo "HOME=$root/home" >> "$GITHUB_ENV"
+          echo "USERPROFILE=$root/home" >> "$GITHUB_ENV"
+          echo "PI_CODING_AGENT_DIR=$root/agent" >> "$GITHUB_ENV"
+          echo "NPI_DECK_HOME=$root/deck" >> "$GITHUB_ENV"
+          echo "NPI_DECK_DB_PATH=$root/deck/deck.db" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$root/home/config" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=$root/home/cache" >> "$GITHUB_ENV"
+          echo "XDG_DATA_HOME=$root/home/data" >> "$GITHUB_ENV"
+          echo "XDG_STATE_HOME=$root/home/state" >> "$GITHUB_ENV"
+          echo "XDG_RUNTIME_DIR=$root/home/run" >> "$GITHUB_ENV"
+          git rev-parse HEAD | tee "$root/proof/source-sha.txt"
+      - name: observe cold knowledge protocol hooks
+        continue-on-error: true
+        shell: bash
+        run: bun test apps/server/src/kb-protocol.test.ts 2>&1 | tee "$RUNNER_TEMP/windows186/proof/kb-cold.log"
+      - name: observe native linked admission and capability lifecycle
+        continue-on-error: true
+        shell: bash
+        run: bun test apps/server/src/card-agents.test.ts 2>&1 | tee "$RUNNER_TEMP/windows186/proof/card-native.log"
+      - name: observe knowledge hooks in actual full suite
+        continue-on-error: true
+        shell: bash
+        run: bun test 2>&1 | tee "$RUNNER_TEMP/windows186/proof/full-suite.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows186-cause-proof
+          path: ${{ runner.temp }}/windows186/proof
