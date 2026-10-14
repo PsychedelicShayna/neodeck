@@ -298,7 +298,7 @@ function RoutineListItem({
 				<div className="min-w-0 flex-1">
 					<div className="flex flex-wrap items-baseline gap-2">
 						<span className="truncate text-sm font-medium text-ink">{routine.name}</span>
-						<span className="chip bg-paper-3 text-ink-3">{routine.specVersion === 1 ? "pipeline" : routine.actionKind}</span>
+						<span className={`chip bg-paper-3 text-ink-3${routine.specVersion === 2 ? " normal-case" : ""}`}>{routine.specVersion === 2 ? "graph" : routine.specVersion === 1 ? "pipeline" : routine.actionKind}</span>
 						{stepCount !== undefined ? <span className="meta">{stepCount} steps</span> : null}
 						{okPct !== undefined ? <span className="meta">{okPct}% ok</span> : null}
 					</div>

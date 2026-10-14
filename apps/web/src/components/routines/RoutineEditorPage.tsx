@@ -17,6 +17,7 @@ interface Props {
 
 export function RoutineEditorPage({ routine, onBack, onSaved, onDeleted }: Props) {
 	const isNew = routine === "new";
+	const isGraph = !isNew && routine.specVersion === 2;
 	const existingMode: Mode = !isNew && routine.specVersion === 1 ? "v1" : "v0";
 	const [mode, setMode] = useState<Mode>(isNew ? "v1" : existingMode);
 	const [err, setErr] = useState<string | undefined>();
@@ -49,7 +50,7 @@ export function RoutineEditorPage({ routine, onBack, onSaved, onDeleted }: Props
 						<ArrowLeft className="h-3.5 w-3.5" />
 						All routines
 					</button>
-					<span className="chip bg-paper-3 text-ink-3">{mode === "v1" ? "pipeline" : "single-action"}</span>
+					<span className={`chip bg-paper-3 text-ink-3${isGraph ? " normal-case" : ""}`}>{isGraph ? "graph" : mode === "v1" ? "pipeline" : "single-action"}</span>
 					{isNew ? (
 						<div className="flex items-center gap-0.5 rounded border border-line bg-paper-2 p-0.5">
 							<button
@@ -92,7 +93,11 @@ export function RoutineEditorPage({ routine, onBack, onSaved, onDeleted }: Props
 			) : null}
 
 			<div className="min-h-0 flex-1 bg-paper">
-				{mode === "v1" ? (
+				{isGraph ? (
+					<p className="px-3 py-3 text-sm text-ink-2">
+						This routine executes a native graph. Its definition is managed through the routine API, not the single-action or pipeline editor.
+					</p>
+				) : mode === "v1" ? (
 					<div className="h-full px-3 py-3">
 						<RoutineBuilder routine={isNew ? undefined : routine} onSaved={onSaved} onError={setErr} />
 					</div>

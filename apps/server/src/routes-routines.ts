@@ -18,12 +18,15 @@ import { logger } from "./log.ts";
 import {
 	createRoutine,
 	createV1Routine,
+	createGraphRoutine,
 	deleteRoutine,
 	getRoutine,
+	getGraphRun,
 	listRoutines,
 	listRuns,
 	updateRoutine,
 	updateV1Routine,
+	updateGraphRoutine,
 } from "./db/routines.ts";
 import {
 	deleteWebhookSecret,
@@ -60,12 +63,43 @@ export function buildRoutinesRouter(runner: RoutinesRunner): Hono {
 		return c.json(body);
 	});
 
+	app.get("/routine-node-types", (c) => c.json({ nodeTypes: runner.graphRegistry.describe() }));
+
+	app.post("/routine-graphs/validate", async (c) => {
+		try {
+			const graph = await c.req.json();
+			const result = runner.graphRegistry.validate(graph);
+			return c.json(result, result.valid ? 200 : 400);
+		} catch {
+			return c.json({ error: "invalid json" }, 400);
+		}
+	});
+
 	app.post("/routines", async (c) => {
 		let body: CreateRoutineRequest & { specYaml?: string };
 		try {
 			body = (await c.req.json()) as CreateRoutineRequest & { specYaml?: string };
 		} catch {
 			return c.json({ error: "invalid json" }, 400);
+		}
+		if (!body || typeof body !== "object" || Array.isArray(body)) return c.json({ error: "invalid request" }, 400);
+		if (body.graph !== undefined) {
+			if (!body.name) return c.json({ error: "name required" }, 400);
+			if (body.specYaml !== undefined || body.cron !== undefined || body.actionKind !== undefined ||
+				body.actionBody !== undefined || body.actionCwd !== undefined) {
+				return c.json({ error: "native graph and legacy authoring fields are exclusive" }, 400);
+			}
+			const validation = runner.graphRegistry.validate(body.graph);
+			if (!validation.valid) return c.json({ error: "invalid graph", details: validation.errors }, 400);
+			try {
+				const routine = createGraphRoutine({
+					name: body.name, description: body.description, graph: body.graph, enabled: body.enabled,
+				}, runner.graphRegistry);
+				runner.schedule(routine);
+				return c.json(routine, 201);
+			} catch (err) {
+				return c.json({ error: String(err) }, 400);
+			}
 		}
 		// V1 routine: presence of specYaml is the discriminator.
 		if (body.specYaml) {
@@ -96,7 +130,11 @@ export function buildRoutinesRouter(runner: RoutinesRunner): Hono {
 			return c.json({ error: "name, cron, actionKind, actionBody required (or pass specYaml for V1)" }, 400);
 		}
 		try {
-			const routine = createRoutine(body);
+			const routine = createRoutine({
+				name: body.name, description: body.description, cron: body.cron,
+				actionKind: body.actionKind, actionBody: body.actionBody,
+				actionCwd: body.actionCwd, enabled: body.enabled,
+			});
 			runner.schedule(routine);
 			return c.json(routine, 201);
 		} catch (err) {
@@ -118,9 +156,31 @@ export function buildRoutinesRouter(runner: RoutinesRunner): Hono {
 		} catch {
 			return c.json({ error: "invalid json" }, 400);
 		}
+		if (!body || typeof body !== "object" || Array.isArray(body)) return c.json({ error: "invalid request" }, 400);
 		const id = c.req.param("id");
 		const existing = getRoutine(id);
 		if (!existing) return c.json({ error: "not found" }, 404);
+		if (existing.specVersion === 2) {
+			if (body.specYaml !== undefined || body.cron !== undefined || body.actionKind !== undefined ||
+				body.actionBody !== undefined || body.actionCwd !== undefined) {
+				return c.json({ error: "native graphs cannot be edited through legacy authoring fields" }, 400);
+			}
+			if (body.graph !== undefined) {
+				const validation = runner.graphRegistry.validate(body.graph);
+				if (!validation.valid) return c.json({ error: "invalid graph", details: validation.errors }, 400);
+			}
+			try {
+				const updated = updateGraphRoutine(id, {
+					name: body.name, description: body.description, graph: body.graph, enabled: body.enabled,
+				}, runner.graphRegistry);
+				if (!updated) return c.json({ error: "not found" }, 404);
+				runner.schedule(updated);
+				return c.json(updated);
+			} catch (err) {
+				return c.json({ error: String(err) }, 400);
+			}
+		}
+		if (body.graph !== undefined) return c.json({ error: "graph requires a native V2 routine" }, 400);
 		// V1 routine: validate + persist spec_yaml; allow enabled-only patches too.
 		if (existing.specVersion === 1) {
 			if (body.specYaml !== undefined) {
@@ -175,6 +235,10 @@ export function buildRoutinesRouter(runner: RoutinesRunner): Hono {
 		const id = c.req.param("id");
 		const r = getRoutine(id);
 		if (!r) return c.json({ error: "not found" }, 404);
+		if (r.specVersion === 2) {
+			const validation = runner.graphRegistry.validate(r.graph);
+			if (!validation.valid) return c.json({ error: "invalid graph", details: validation.errors }, 400);
+		}
 		let payload: Record<string, unknown> = {};
 		try {
 			const text = await c.req.text();
@@ -204,6 +268,12 @@ export function buildRoutinesRouter(runner: RoutinesRunner): Hono {
 		const runId = c.req.param("runId");
 		const body: ListRoutineStepRunsResponse = { steps: listStepRuns(runId) };
 		return c.json(body);
+	});
+
+	app.get("/routines/:id/runs/:runId/graph", (c) => {
+		const trace = getGraphRun(c.req.param("runId"));
+		if (!trace || trace.routineId !== c.req.param("id")) return c.json({ error: "not found" }, 404);
+		return c.json(trace);
 	});
 
 	/**

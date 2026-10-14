@@ -156,8 +156,8 @@ Tables:
 - `task_states` — kanban columns. Configurable.
 - `tasks` — backlog/active/blocked/done items. `display_id` for human IDs (`T-1`, ...).
 - `inbox_items` — quick captures + promote-to-task records.
-- `routines` — cron / webhook / manual / event routine definitions (V0 single-action + V1 multi-step pipelines via `spec_yaml`).
-- `routine_runs` — per-run history with status, duration, total cost, and the pinned NeoPi backend identity for runs with agent steps.
+- `routines` — cron / webhook / manual / event definitions: V0 single-action, V1 pipelines in `spec_yaml`, or V2 native graphs in `graph_json`.
+- `routine_runs` — per-run history with status, duration, total cost, pinned NeoPi backend identity for agent steps, and immutable V2 execution traces in `graph_run_json`.
 - `routine_step_runs` — per-step records inside a V1 run (stdout / stderr excerpts, JSON output, model, tokens, cost, retry attempt).
 - `routine_state` — cross-run persistent state per routine, addressable from the templating engine.
 - `bridge_state` — supervised bridge process records (currently Telegram).
@@ -167,6 +167,54 @@ Tables:
 On first boot against an empty `tasks` table the deck seeds a single
 "Welcome to npi-deck" backlog task — see `apps/server/src/db/index.ts`
 `seedWelcomeTaskIfEmpty`.
+
+## Native routine graphs
+
+`packages/protocol/src/graph.ts` owns the shared V2 contracts. A `RoutineGraph`
+contains typed nodes, named input/output ports and directed edges; its JSON,
+not YAML or canvas layout, is the execution source of truth. Port types are
+`object`, `array`, `string`, `number`, `boolean` and `null`. `object` is the
+general type: narrower outputs may connect to it, but a general output cannot
+connect to a narrower input. Required inputs and single/multiple cardinality
+are validated before persistence or dispatch, together with node configuration.
+
+`GraphNodeRegistry.register({ definition, execute })` registers one node type.
+The definition supplies its ports and optional configuration JSON Schema;
+`execute(context)` returns named `{ port, value }` emissions, synchronously or
+asynchronously. `GraphNodeContext` provides the node, ordered
+`{ port, edgeId, output }` inputs, activation, run ID, abort signal and incremental
+usage reporting. Handlers must cooperate with the abort signal; settled handlers
+cannot report later usage. Validation, execution and the HTTP catalogue use the
+same registry. `RoutinesRunner.graphRegistry` is the registration point for
+subsequent node catalogues.
+
+Every emitted `GraphOutput` contains `{ nodeId, port, result, inputs }`. Object
+results and input envelopes retain their original in-memory objects; scalar,
+null and array values reside in `result.value`. `inputs` preserves incoming edge
+order and recursively retains upstream envelopes. Only an emitted port activates
+its connected branch: `1`, a truthy string and literal `true` remain different
+values. `readGraphPath(output, path)` traverses own keys, and
+`findGraphOutput(output, nodeId, port?)` finds the nearest upstream envelope in
+stable input order.
+
+`GraphActivation` carries an `eventType`, the original event object and an
+optional selected source node. The built-in `event.source` emits that event
+through its `event` port; one activation runs each matching source once.
+Unselected sources and disconnected branches produce skipped records, not
+invented values. Execution is a deterministic DAG; inbox subscriptions, gate
+and operation catalogues, external actions, iteration and canvas authoring have
+their own slices and do not change this envelope contract.
+
+Create and update through `POST /api/routines` and
+`PATCH /api/routines/:id` with `graph`, and execute through the existing run
+endpoint. `GET /api/routine-node-types` returns the shared catalogue;
+`POST /api/routine-graphs/validate` rejects invalid connections before saving or
+running them. Native graphs reject legacy action/YAML authoring fields.
+`GET /api/routines/:id/runs/:runId/graph` returns a `GraphRunRecord`, including
+the executed definition, activation, ordered node records, outputs, status and
+usage. Final traces and existing run aggregates persist atomically. Later edits
+do not replace a historical trace; reopening the database preserves exact JSON
+values and recursive provenance.
 
 ## Theming
 

@@ -2,22 +2,27 @@
  * Top-level routines runner. Dispatches by `routine.specVersion`:
  *   - V0 (specVersion=0): legacy single-action shell-out (bash/script/prompt)
  *   - V1 (specVersion=1): multi-step pipeline via runV1Pipeline()
+ *   - V2 (specVersion=2): native typed graph via executeGraph()
  *
  * Also owns the Cron scheduler. For V0 routines, schedule from `routine.cron`.
  * For V1 routines, parse `spec.trigger` and schedule a Cron per cron-trigger
  * entry. Non-cron triggers (webhook, manual, event) sit passive and are
  * invoked from routes-hooks.ts / routes-routines.ts.
+ * V2 schedules each generic event.source with an optional config.cron, selecting
+ * that source explicitly and preserving its configured event type.
  */
 
 import { Cron } from "croner";
 import { parse as parseYaml } from "yaml";
 import * as path from "node:path";
 
-import type { Routine, RoutineActionKind, RoutineSpec, RoutineTrigger } from "@npi-deck/protocol";
+import type { GraphActivation, GraphExecutionResult, GraphObject, Routine, RoutineActionKind, RoutineSpec, RoutineTrigger } from "@npi-deck/protocol";
 
 import { logger } from "./log.ts";
 import {
 	finishRun,
+	finishGraphRun,
+	getRoutine,
 	listRoutines,
 	setRoutineSchedule,
 	startRun,
@@ -29,6 +34,7 @@ import { loadConfig } from "./config.ts";
 import { spawnOwned, terminateOwned } from "./owned-process.ts";
 import { routineAgentCommand } from "./routines/agent-command.ts";
 import { workRegistry } from "./work-registry.ts";
+import { executeGraph, GraphNodeRegistry } from "./routines/graph-runner.ts";
 
 const log = logger("routines-runner");
 
@@ -56,6 +62,7 @@ export class RoutinesRunner {
 	private closing = false;
 	private readonly runs = new Map<string, { abort: AbortController; finished: Promise<void> }>();
 	readonly concurrency = new ConcurrencyController();
+	readonly graphRegistry = new GraphNodeRegistry();
 	constructor(private readonly agentCommand: () => string[] = () => routineAgentCommand([])) {}
 	get busy(): boolean { return this.runs.size > 0; }
 	get workSnapshot(): Array<{ runId: string; routineId: string }> {
@@ -94,7 +101,7 @@ export class RoutinesRunner {
 		}
 
 		const scheduled: ScheduledCron[] = [];
-		for (const expr of cronExprs) {
+		for (const { expression: expr, activation } of cronExprs) {
 			try {
 				const cron = new Cron(
 					expr,
@@ -104,7 +111,9 @@ export class RoutinesRunner {
 						...(r.timezone ? { timezone: r.timezone } : {}),
 					},
 					() => {
-						void this.fire(r.id, "cron").catch((err) => log.warn(`cron fire failed`, err));
+						void (activation
+							? this.fireGraphActivation(r.id, { ...activation, event: { firedAt: new Date().toISOString() } }, "cron")
+							: this.fire(r.id, "cron")).catch((err) => log.warn(`cron fire failed`, err));
 					},
 				);
 				scheduled.push({ cron, routineId: r.id });
@@ -136,15 +145,16 @@ export class RoutinesRunner {
 		payload: Record<string, unknown> = {},
 	): Promise<void> {
 		if (this.closing) throw new Error("routine admissions closed");
-		const all = listRoutines();
-		const routine = all.find((r) => r.id === routineId);
+		const routine = getRoutine(routineId);
 		if (!routine) {
 			log.warn(`fire: routine ${routineId} not found`);
 			return;
 		}
 		if (!routine.enabled && (trigger === "cron" || trigger === "webhook" || trigger === "event")) return;
 
-		if (routine.specVersion === 1 && routine.specYaml) {
+		if (routine.specVersion === 2) {
+			await this.fireGraph(routine, { eventType: trigger, event: payload as GraphObject }, trigger);
+		} else if (routine.specVersion === 1 && routine.specYaml) {
 			await this.fireV1(routine, trigger, payload);
 		} else {
 			await this.fireV0(routine, trigger === "cron" || trigger === "manual" ? trigger : "manual", payload);
@@ -156,6 +166,76 @@ export class RoutinesRunner {
 			lastRunAt: now,
 			nextRunAt: next,
 		});
+	}
+
+	/** Admission point for future inbox subscriptions; activations are never routed through V0. */
+	async fireGraphEvent(routineId: string, activation: GraphActivation): Promise<void> {
+		await this.fireGraphActivation(routineId, activation, "event");
+	}
+
+	private async fireGraphActivation(
+		routineId: string,
+		activation: GraphActivation,
+		trigger: "cron" | "event",
+	): Promise<void> {
+		if (this.closing) throw new Error("routine admissions closed");
+		const routine = getRoutine(routineId);
+		if (!routine || routine.specVersion !== 2) throw new Error("native graph routine required");
+		if (!routine.enabled) return;
+		await this.fireGraph(routine, activation, trigger);
+		setRoutineSchedule(routineId, {
+			lastRunAt: new Date().toISOString(),
+			nextRunAt: earliestNextRun(this.crons.get(routineId) ?? []),
+		});
+	}
+
+	private async fireGraph(
+		routine: Routine,
+		activation: GraphActivation,
+		trigger: "cron" | "manual" | "webhook" | "event",
+	): Promise<void> {
+		if (!routine.graph) throw new Error(`native routine ${routine.id} has no graph`);
+		const graph = routine.graph;
+		const validation = this.graphRegistry.validate(graph);
+		if (!validation.valid) throw new Error(`invalid graph: ${JSON.stringify(validation.errors)}`);
+		const definition = structuredClone(graph);
+		const activationSnapshot = structuredClone(activation);
+		const run = startRun(routine.id, trigger, activation.event);
+		const decision = this.concurrency.decide(routine.id, run.id, graph.concurrency ?? "skip");
+		const persist = (result: GraphExecutionResult, abortReason?: string) => finishGraphRun({
+			...result, id: run.id, routineId: routine.id, startedAt: run.startedAt,
+			endedAt: new Date().toISOString(), graph: definition, activation: activationSnapshot,
+		}, abortReason);
+		if (decision.kind === "skip") {
+			persist({ status: "aborted", nodeRuns: [], outputs: [], error: "concurrency_skipped" }, "concurrency_skipped");
+			return;
+		}
+		if (decision.kind === "cancel") decision.toCancel.abort();
+		const key = `${routine.id}:${run.id}`;
+		const releaseWork = workRegistry.admit(decision.kind === "queue" ? "routine-queued" : "routine-run", key);
+		const finished = (async () => {
+			try {
+				if (decision.kind === "queue") await decision.release;
+				if (decision.abort.signal.aborted) {
+					persist({ status: "aborted", nodeRuns: [], outputs: [], abortReason: "cancelled", error: "cancelled" });
+					return;
+				}
+				if (decision.kind === "queue") workRegistry.transition("routine-queued", "routine-run", key);
+				const result = await executeGraph(graph, activation, this.graphRegistry, {
+					runId: run.id, signal: decision.abort.signal,
+				});
+				persist(result);
+			} catch (err) {
+				persist({
+					status: decision.abort.signal.aborted ? "aborted" : "failed",
+					nodeRuns: [], outputs: [], error: String(err),
+				});
+			} finally {
+				this.concurrency.finish(routine.id, run.id);
+			}
+		})();
+		this.runs.set(key, { abort: decision.abort, finished });
+		try { await finished; } finally { this.runs.delete(key); releaseWork(); }
 	}
 
 	private async fireV0(routine: Routine, trigger: "cron" | "manual", payload: Record<string, unknown>): Promise<void> {
@@ -258,15 +338,23 @@ export class RoutinesRunner {
 	}
 }
 
-/** Pull every cron expression out of a routine. Handles V0 (`routine.cron`) and V1 (parses spec_yaml). */
-function collectCronExpressions(routine: Routine): string[] {
+/** V2 schedules native event sources only; legacy cron discovery remains unchanged. */
+function collectCronExpressions(routine: Routine): Array<{ expression: string; activation?: GraphActivation }> {
+	if (routine.specVersion === 2) {
+		return (routine.graph?.nodes ?? [])
+			.filter((node) => node.type === "event.source" && typeof node.config.cron === "string")
+			.map((node) => ({
+				expression: node.config.cron as string,
+				activation: { eventType: node.config.eventType as string, sourceNodeId: node.id, event: {} },
+			}));
+	}
 	if (routine.specVersion === 1 && routine.specYaml) {
 		try {
 			const spec = parseYaml(routine.specYaml) as RoutineSpec;
-			const out: string[] = [];
+			const out: Array<{ expression: string }> = [];
 			for (const t of spec.trigger ?? []) {
 				if ("cron" in t && typeof (t as { cron?: unknown }).cron === "string") {
-					out.push((t as RoutineTrigger & { cron: string }).cron);
+					out.push({ expression: (t as RoutineTrigger & { cron: string }).cron });
 				}
 			}
 			return out;
@@ -274,7 +362,7 @@ function collectCronExpressions(routine: Routine): string[] {
 			return [];
 		}
 	}
-	return routine.cron ? [routine.cron] : [];
+	return routine.cron ? [{ expression: routine.cron }] : [];
 }
 
 // ─── V0 single-action executor (preserved for backward compat) ────────────
