@@ -2,7 +2,7 @@
  * First-run wizard. Four steps:
  *
  *   1. Welcome           — value prop + intent
- *   2. Knowledge base    — scaffold the kb root with a README
+ *   2. Knowledge base    — select the agent-authored KB location
  *   3. Connect provider  — Claude / ChatGPT OAuth, or OpenRouter API key
  *   4. Done              — handoff to chat
  *
@@ -211,31 +211,27 @@ function Step2Kb({
 	onNext: () => void;
 }) {
 	const [busy, setBusy] = useState(false);
-	const [seeded, setSeeded] = useState(false);
+	const [savedRoot, setSavedRoot] = useState<string>();
 	const [error, setError] = useState<string | null>(null);
 	const [pathValue, setPathValue] = useState(state.kbRoot);
 	const [editing, setEditing] = useState(false);
 
 	const alreadyExists = state.kbExists;
 	const pathChanged = pathValue.trim() !== state.kbRoot;
+	const locationReady = savedRoot === (pathValue.trim() || state.kbRoot) || (alreadyExists && !pathChanged);
 
-	async function scaffold(): Promise<void> {
+	async function saveLocation(): Promise<void> {
 		setBusy(true);
 		setError(null);
 		try {
 			const target = pathValue.trim() || state.kbRoot;
-			// Seed the README at the user-provided path. The endpoint
-			// is idempotent on existing files. We deliberately don't call
-			// /api/kb/init because that only writes to the SERVER's resolved
-			// `NPI_DECK_KB_ROOT` — ignoring whatever the user just typed.
-			await onboardingApi.seedKbSystem(target);
 			// Persist the choice so the next server restart picks it up. Without
 			// this the kb watcher / indexer keeps pointing at the old root and
 			// the /kb tab looks empty until manual env edit.
 			if (pathChanged) {
 				await settingsApi.patchEnv({ NPI_DECK_KB_ROOT: target });
 			}
-			setSeeded(true);
+			setSavedRoot(target);
 			await onRefresh();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
@@ -250,8 +246,8 @@ function Step2Kb({
 				<h1 className="text-xl font-semibold text-ink">Knowledge base</h1>
 				<p className="mt-2 text-sm text-ink-2">
 					NPI deck's <code className="font-mono">/kb</code> view is a
-					plaintext-portable wiki the agent reads and writes. Set one up now and
-					the agent has somewhere to put long-term memory.
+					plaintext-portable wiki agents read on request and populate in their own
+					project areas. Choose a location; the agent creates notes as it learns.
 				</p>
 			</div>
 
@@ -281,8 +277,8 @@ function Step2Kb({
 				)}
 				<div className="mt-2 text-2xs text-ink-3">
 					{alreadyExists && !pathChanged
-						? "Already exists — scaffold will add starter files only if missing."
-						: "Will be created with a starter README."}
+						? "Existing vault selected — agents add project knowledge on request."
+						: "Agents create scoped project notes here; setup does not populate the vault."}
 					{pathChanged ? (
 						<span className="ml-1 text-warn">
 							Path differs from server's resolved root; takes full effect after deck restart.
@@ -306,18 +302,18 @@ function Step2Kb({
 					Skip this step
 				</button>
 				<div className="flex items-center gap-2">
-					{seeded || alreadyExists ? (
+					{locationReady ? (
 						<span className="flex items-center gap-1 text-xs text-success">
 							<CheckCircle2 className="h-4 w-4" /> Ready
 						</span>
 					) : null}
-					{seeded || alreadyExists ? (
+					{locationReady ? (
 						<Button onClick={onNext}>
 							Continue <ChevronRight className="ml-1 h-4 w-4" />
 						</Button>
 					) : (
-						<Button onClick={() => void scaffold()} disabled={busy}>
-							{busy ? "Scaffolding…" : "Create knowledge base"}
+						<Button onClick={() => void saveLocation()} disabled={busy}>
+							{busy ? "Saving…" : "Save KB location"}
 						</Button>
 					)}
 				</div>

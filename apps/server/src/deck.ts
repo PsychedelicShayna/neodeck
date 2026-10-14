@@ -23,9 +23,10 @@ import { WsHub, type ConnectionData } from "./ws.ts";
 import { MarketplaceService } from "./marketplace-service.ts";
 import { SkillsService } from "./skills-service.ts";
 import { startSkillsWatcher } from "./skills-watcher.ts";
-import { KbService, resolveKbRoot } from "./kb-service.ts";
+import { resolveKbRoot } from "./kb-service.ts";
 import { startKbWatcher } from "./kb-watcher.ts";
 import { KbProtocolHandler } from "./kb-protocol.ts";
+import { workflowKb } from "./kb-workflows.ts";
 import { syncMaintenanceGateOrgRoot } from "./maintenance-gate.ts";
 import { installOptedInStarters, reportRetiredStarterSwitches } from "./starters.ts";
 import { buildDefaultBridgeSupervisor } from "./bridge-supervisor.ts";
@@ -201,7 +202,7 @@ export async function startDeck(opts: StartDeckOptions = {}): Promise<DeckHandle
 	const supervisor = buildDefaultBridgeSupervisor();
 	const marketplaceService = new MarketplaceService();
 	const skillsService = new SkillsService(config, marketplaceService);
-	const kbService = new KbService({ root: resolveKbRoot() });
+	const kbService = workflowKb();
 	const router = buildRouter(
 		bridge,
 		config,

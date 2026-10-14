@@ -44,7 +44,7 @@ NPI deck is the cockpit that holds all of that. The chat surface stays at parity
 
 **An inbox you can dump into.** Scratch ideas, bug reports, decisions to revisit. One-click promote to task when the dust settles. No mental context-switch from current work.
 
-**A knowledge base over your own markdown.** Point `/kb` at a `~/kb` directory you already keep (or accept the default), and the deck gives you a tree, viewer, editor, Obsidian-style force-directed graph, full-text search, `[[wikilink]]` resolution + create-on-click. Long-term memory that's plaintext-portable and outlives any agent session.
+**A knowledge base over your own markdown.** Point `/kb` at your vault for a read-only tree, viewer, Obsidian-style graph, links/backlinks and search. Agents traverse with `kb_read` and populate server-scoped project knowledge with `kb_write`. No KB content enters a prompt automatically: use `/kb read <path>` in chat, explicitly wire routine inputs, or tell the agent to consult a section. Capture an inbox item with `/kb capture <inbox-id> projects/<project>/<note>.md` in a project chat.
 
 **Routines.** Multi-step pipelines on a cron, webhook, manual, or event trigger — author them visually on a node canvas, or in YAML if you're that kind of person. Ships with a `daily-briefing` template that wakes up, reads your kanban + inbox, and writes you a one-card morning summary back to the inbox. Build your own from there.
 

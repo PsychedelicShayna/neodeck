@@ -60,6 +60,7 @@ import type {
 	SessionHandle,
 	SlashDispatchResult,
 } from "./types.ts";
+import { kbTools } from "../kb-workflows.ts";
 
 const log = logger("bridge:in-process");
 const DEFAULT_MODEL_CANDIDATES = [
@@ -398,6 +399,7 @@ export class InProcessAgentBridge implements AgentBridge {
 			sessionManager,
 			modelRegistry,
 			settings,
+			customTools: kbTools(() => ({ agentId: sessionId, projectCwd: sessionManager.getCwd?.() ?? cwd, readOnly: false })),
 			authStorage: modelRegistry.authStorage,
 			// Skip eval-tool Python warmup on session create. On Windows this otherwise
 			// flashes a python.exe console window each turn-zero; on demand spawn is fine.
@@ -1388,7 +1390,7 @@ export class InProcessSessionHandle implements SessionHandle {
 		let result: import("../deck-slash-commands.ts").DeckSlashResult | "fallthrough";
 		try {
 			const { executeDeckSlashCommand } = await import("../deck-slash-commands.ts");
-			result = await executeDeckSlashCommand(text, { cwd: this.cwd });
+			result = await executeDeckSlashCommand(text, { cwd: this.mixtureCwd(), sessionId: this.sessionId });
 		} catch (err) {
 			const message = `Slash command error: ${String((err as Error).message ?? err)}`;
 			log.warn(`deck slash dispatch threw for ${text.slice(0, 40)}: ${String(err)}`);
@@ -1396,6 +1398,7 @@ export class InProcessSessionHandle implements SessionHandle {
 			return { kind: "consumed", output: message };
 		}
 		if (result === "fallthrough") return { kind: "fallthrough" };
+		if (result.kind === "rewritten") return result;
 		this.emitSyntheticSlashRoundTrip(text, result.output || "Done.");
 		return { kind: "consumed", output: result.output || "Done." };
 	}

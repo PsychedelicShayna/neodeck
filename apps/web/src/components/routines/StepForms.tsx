@@ -95,6 +95,10 @@ export function AgentStepForm({ step, onChange }: FormProps<"agent">) {
 					placeholder="Summarize {{ steps.fetch_tasks.json }} in 2 sentences."
 				/>
 			</Field>
+			<Field label="KB inputs (explicit note paths; empty means none)">
+				<TagInput values={step.kb_inputs ?? []} onChange={paths => patch({ kb_inputs: paths })}
+					placeholder="projects/neodeck/overview.md" />
+			</Field>
 			<Field label="model (optional)">
 				<TextInput
 					value={step.model ?? ""}
@@ -383,6 +387,9 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 					inbox_ref: step.action === action ? step.inbox_ref : "i_...",
 				});
 				return;
+			case "kb_read":
+				onChange({ ...common, action, path: step.action === action ? step.path : "README.md" });
+				return;
 			case "kb_orphan_census":
 				onChange({
 					...common,
@@ -410,6 +417,7 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 					<option value="get_task">get_task</option>
 					<option value="get_inbox_item">get_inbox_item</option>
 					<option value="kb_orphan_census">kb_orphan_census</option>
+					<option value="kb_read">kb_read (explicit input)</option>
 				</select>
 			</Field>
 			{step.action === "create_inbox_item" ? (
@@ -574,6 +582,11 @@ export function DeckStepForm({ step, onChange }: FormProps<"deck">) {
 						<TextInput value={step.inbox_ref} onChange={(v) => onChange({ ...step, inbox_ref: v })} placeholder="i_..." mono />
 					</Field>
 				</div>
+			) : null}
+			{step.action === "kb_read" ? (
+				<Field label="KB note path (explicit input)">
+					<TextInput value={step.path} onChange={path => onChange({ ...step, path })} placeholder="README.md" mono />
+				</Field>
 			) : null}
 			{step.action === "kb_orphan_census" ? (
 				<div className="space-y-2">

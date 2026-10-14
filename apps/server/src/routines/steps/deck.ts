@@ -17,6 +17,7 @@ import { KbService, resolveKbRoot } from "../../kb-service.ts";
 import { renderString } from "../template.ts";
 import { notificationService } from "../../notifications/index.ts";
 import type { RunContext, StepResult } from "../types.ts";
+import { readKb, workflowKb } from "../../kb-workflows.ts";
 
 type DeckStep = Extract<RoutineStep, { type: "deck" }>;
 
@@ -28,6 +29,10 @@ export async function executeDeckStep(
 	const startedMs = Date.now();
 	try {
 		switch (step.action) {
+			case "kb_read": {
+				const note = await readKb(workflowKb(), { operation: "open", path: renderString(step.path, context as unknown as Record<string, unknown>) });
+				return ok(startedMs, JSON.stringify(note), note);
+			}
 			case "create_inbox_item": {
 				const item = createInbox({
 					kind: step.kind,

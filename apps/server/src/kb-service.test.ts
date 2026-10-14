@@ -165,3 +165,64 @@ describe("KbService orphan census", () => {
 		expect(census.unresolvedLinks).toBe(4);
 	});
 });
+
+describe("KbService literal full-text search", () => {
+	test("different warm queries preserve literal hits, snippets, scores and metadata", async () => {
+		put("notes/alpha.md", "---\nname: Human heading\ntags: [topic]\n---\nxxMiXeD::needleYY mixed::needle\n");
+		put("notes/beta.md", "# Other\nOnly second/pattern appears here.\n");
+		// All query trigrams occur, but not in the query's order.
+		put("notes/decoy.md", "# Decoy\nmix ixe xed ed: d:: ::n :ne nee eed edl dle\n");
+		const kb = new KbService({ root });
+		await kb.getBacklinks("notes/alpha.md");
+		const first = await kb.search("mixed::needle", 50);
+		expect(first.results).toHaveLength(1);
+		expect(first.results[0]).toMatchObject({
+			path: "notes/alpha.md", title: "Human heading", score: 11, matchKind: "body",
+		});
+		expect(first.results[0]?.snippet).toContain("MiXeD::needle");
+		const second = await kb.search("second/pattern", 50);
+		expect(second.results.map((r) => r.path)).toEqual(["notes/beta.md"]);
+		expect(second.results[0]?.snippet).toContain("second/pattern");
+		expect((await kb.search("human heading", 50)).results[0]).toMatchObject({
+			path: "notes/alpha.md", title: "Human heading", score: 70, matchKind: "title",
+		});
+		expect((await kb.search("topic", 50)).results[0]).toMatchObject({
+			path: "notes/alpha.md", score: 60, matchKind: "tag",
+		});
+		expect((await kb.search("alpha", 50)).results[0]).toMatchObject({
+			path: "notes/alpha.md", score: 100, matchKind: "stem",
+		});
+	});
+
+	test("short, Unicode and repeated substrings keep literal occurrence semantics", async () => {
+		put("notes/literals.md", "§§§ Ω😀 punctuation/@! " + "zz ".repeat(25));
+		const kb = new KbService({ root });
+		for (const [query, score] of [["§", 12], ["§§", 10], ["Ω😀", 10], ["/@!", 10], ["zz", 30]] as const) {
+			const response = await kb.search(query, 50);
+			expect(response.results).toHaveLength(1);
+			expect(response.results[0]).toMatchObject({ path: "notes/literals.md", matchKind: "body", score });
+			expect(response.results[0]?.snippet).toContain(query);
+		}
+		expect((await kb.search("not-present-anywhere", 50)).totalMatches).toBe(0);
+	});
+
+	test("invalidation refreshes body hits and reverse edges across concurrent cold readers", async () => {
+		put("notes/source.md", "Old-unique marker [[kept]]\n");
+		const kb = new KbService({ root });
+		const pending = kb.search("old-unique", 50);
+		put("notes/source.md", "New-unique marker [[hub]]\n");
+		kb.invalidate();
+		const [oldHits, newHits, backlinks] = await Promise.all([
+			pending, kb.search("new-unique", 50), kb.getBacklinks("notes/hub.md"),
+		]);
+		expect(oldHits.totalMatches).toBe(0);
+		expect(newHits.results.map((r) => r.path)).toEqual(["notes/source.md"]);
+		expect(backlinks?.backlinks.map((b) => b.source)).toEqual(["notes/source.md"]);
+		put("notes/source.md", "Replacement marker [[kept]]\n");
+		kb.invalidate();
+		expect((await kb.search("new-unique", 50)).totalMatches).toBe(0);
+		expect((await kb.search("replacement marker", 50)).results.map((r) => r.path)).toEqual(["notes/source.md"]);
+		expect((await kb.getBacklinks("notes/hub.md"))?.backlinks).toEqual([]);
+		expect((await kb.getBacklinks("archive/kept.md"))?.backlinks.map((b) => b.source).sort()).toEqual(["notes/hub.md", "notes/source.md"]);
+	});
+});

@@ -627,15 +627,6 @@ export interface CompleteOnboardingRequest {
 	skipped: boolean;
 }
 
-/** Body of `POST /api/onboarding/seed-kb-system`. Optional override; defaults to resolved kb root. */
-export interface SeedKbSystemRequest {
-	kbRoot?: string;
-}
-
-export interface SeedKbSystemResponse {
-	created: string[];
-	skipped: string[];
-}
 
 export interface SetSessionModelRequest {
 	model: ModelRef;
@@ -1838,7 +1829,8 @@ export type RoutineDeckAction =
 	| "list_inbox"
 	| "get_task"
 	| "get_inbox_item"
-	| "kb_orphan_census";
+	| "kb_orphan_census"
+	| "kb_read";
 
 
 /** Common fields every step type accepts. */
@@ -1865,6 +1857,8 @@ export type RoutineStep =
 			structured_output?: { schema: unknown; strict?: boolean };
 			skills_allowed?: string[];
 			mcp_servers_allowed?: string[];
+			/** Explicit requested KB paths only; omitted means no KB context. */
+			kb_inputs?: string[];
 		})
 	| (RoutineStepCommon & {
 			type: "write";
@@ -1962,6 +1956,12 @@ export type RoutineStep =
 						action: "kb_orphan_census";
 						/** Cap on the orphans listed; `orphanCount` still counts them all. Defaults to unlimited. */
 						limit?: number;
+				  }
+				| {
+						type: "deck";
+						action: "kb_read";
+						/** Explicit note path; output is available to downstream templates. */
+						path: string;
 				  }
 			))
 	| (RoutineStepCommon & {

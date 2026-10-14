@@ -36,18 +36,6 @@ export const kbApi = {
 	file(path: string): Promise<KbFileResponse> {
 		return req<KbFileResponse>(`/kb/file${qs({ path })}`);
 	},
-	put(path: string, content: string): Promise<KbFileResponse> {
-		return req<KbFileResponse>(`/kb/file${qs({ path })}`, {
-			method: "PUT",
-			body: JSON.stringify({ content }),
-		});
-	},
-	create(path: string, content: string): Promise<KbFileResponse> {
-		return req<KbFileResponse>(`/kb/file${qs({ path })}`, {
-			method: "POST",
-			body: JSON.stringify({ content }),
-		});
-	},
 	graph(): Promise<KbGraphResponse> {
 		return req<KbGraphResponse>("/kb/graph");
 	},
@@ -60,19 +48,11 @@ export const kbApi = {
 	status(): Promise<KbStatusResponse> {
 		return req<KbStatusResponse>("/kb/status");
 	},
-	init(): Promise<KbInitResponse> {
-		return req<KbInitResponse>("/kb/init", { method: "POST" });
-	},
 };
 
-// Lightweight local types so we don't need to round-trip through the protocol
-// package just for two endpoints used only by the welcome panel.
+// Status is used by the read-only welcome panel.
 export interface KbStatusResponse {
 	root: string;
 	exists: boolean;
 	fileCount: number;
-}
-export interface KbInitResponse extends KbStatusResponse {
-	created: boolean;
-	refusedReason?: string;
 }

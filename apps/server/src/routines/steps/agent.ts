@@ -7,6 +7,7 @@ import { routineAgentCommand, routineAgentSupportsMcpAllowlist } from "../agent-
 import { renderString } from "../template.ts";
 import { checkStructuredOutput, isAnswerFault } from "./structured-output.ts";
 import type { RunContext, StepResult } from "../types.ts";
+import { kbPrompt } from "../../kb-workflows.ts";
 
 const MAX_EXCERPT = 8 * 1024;
 const MAX_PROMPT_CHARS = 30 * 1024;
@@ -195,7 +196,6 @@ export async function executeAgentStep(
 	if (step.structured_output) {
 		prompt += `\n\nRespond with ONLY JSON matching this schema (no prose, no fences):\n${JSON.stringify(step.structured_output.schema)}`;
 	}
-	if (prompt.length > MAX_PROMPT_CHARS) prompt = prompt.slice(0, MAX_PROMPT_CHARS) + `\n[prompt truncated at ${MAX_PROMPT_CHARS} chars]`;
 	const adapter = new AgentJsonStream();
 	let stderr = "";
 	const result = (status: StepResult["status"], error?: string, json?: unknown): StepResult => {
@@ -208,6 +208,8 @@ export async function executeAgentStep(
 		};
 	};
 	try {
+		prompt = await kbPrompt(prompt, step.kb_inputs?.map(value => renderString(value, context as unknown as Record<string, unknown>)));
+		if (prompt.length > MAX_PROMPT_CHARS) prompt = prompt.slice(0, MAX_PROMPT_CHARS) + `\n[prompt truncated at ${MAX_PROMPT_CHARS} chars]`;
 		const command = pinnedCommand ?? routineAgentCommand([]);
 		const args = ["-p", "--mode", "json", "--no-session", ...(step.model ? ["--model", step.model] : []),
 			...skillsFlags(step),

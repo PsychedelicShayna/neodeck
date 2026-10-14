@@ -9,6 +9,7 @@ import {
 	listTasks,
 	moveTask,
 } from "./db/tasks.ts";
+import { kbPrompt, writeKb, workflowKb } from "./kb-workflows.ts";
 
 /**
  * Deck-native slash command. Unlike SDK builtins these operate directly on
@@ -24,9 +25,10 @@ export interface DeckSlashCommand {
 
 export interface DeckSlashContext {
 	cwd: string;
+	sessionId?: string;
 }
 
-export type DeckSlashResult = { kind: "consumed"; output: string };
+export type DeckSlashResult = { kind: "consumed"; output: string } | { kind: "rewritten"; output: string; prompt: string };
 
 function fmtTask(t: Task): string {
 	const state = getState(t.stateId);
@@ -34,6 +36,27 @@ function fmtTask(t: Task): string {
 }
 
 export const DECK_SLASH_COMMANDS: DeckSlashCommand[] = [
+	{
+		name: "kb read",
+		description: "Explicitly send a KB note as requested chat/agent context",
+		argumentHint: "<path>",
+		async handle(args) {
+			if (!args.trim()) throw new Error("Usage: /kb read <path>");
+			return { kind: "rewritten", output: "", prompt: await kbPrompt(`Read this KB section: ${args.trim()}`, [args.trim()]) };
+		},
+	},
+	{
+		name: "kb capture",
+		description: "Ask this project agent to capture an inbox item into its KB area",
+		argumentHint: "<inbox-id> <path>",
+		async handle(args, ctx) {
+			const match = /^(\S+)\s+(.+)$/.exec(args.trim());
+			if (!match || !ctx.sessionId) throw new Error("Usage in an active project chat: /kb capture <inbox-id> <path>");
+			const note = await writeKb(workflowKb(), { agentId: ctx.sessionId, projectCwd: ctx.cwd, readOnly: false },
+				{ path: match[2]!, captureId: match[1]!, mode: "create", kind: "note" }) as { path: string };
+			return { kind: "consumed", output: `Captured to kb://${note.path}` };
+		},
+	},
 	{
 		name: "task add",
 		description: "Create a backlog task in this workspace",
