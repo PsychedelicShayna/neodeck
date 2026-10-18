@@ -2,13 +2,13 @@
 
 The workspace policy governs branches, commits, signing, pull requests, merging,
 labels, and GitHub posting. This file holds the repository-specific values;
-nothing here adds a confirmation step.
+the review procedure includes the policy repair's head-specific Captain approval.
 
 ## Branches
 
 | Role | Branch | Local checkout | Ships as |
 | --- | --- | --- | --- |
-| Default (promoted) | `main` | `~/source/github/PsychedelicShayna/neodeck` | Installed snapshot `~/.local/share/npi-deck`, served by `npi-deck.service` |
+| Default (promoted) | `main` | Repository checkout | Installed snapshot described in `docs/install.md`, served by `npi-deck.service` |
 | Integration | `nightly` | No standing checkout; topic worktrees start from `origin/nightly` | Verification only; does not replace the live snapshot or service |
 
 - Topic branches: from the repository checkout, `git fetch origin && git worktree add ../neodeck-wt-<slug> -b <type>/<slug> origin/nightly`.
@@ -19,7 +19,7 @@ nothing here adds a confirmation step.
 ## Merging
 
 - Merge commits only (`gh pr merge --merge`). Subject: `Merge PR #<number>: <conventional PR subject> (@<author>)`.
-- The authoring agent merges its own PR into `nightly` once the workspace gates pass, unless the assignment reserves merging to another agent or the Captain. Review bots (`docs/agents/pr-review-bots.md`) are advisory and requested at the agent's discretion.
+- The authoring agent merges its own PR into `nightly` only after workspace gates and the current-head review gate in `docs/agents/pr-review-bots.md` pass, unless the assignment reserves merging to another agent or the Captain. Read every existing round and dispose of every finding in-thread. The dated fix-forward exception and the policy repair's SHA-naming Captain approval are defined in that procedure.
 - Contributor heads (any author other than the owner) are never executed on the owner's machine; see `docs/agents/pr-review-bots.md` › Running PR code.
 
 ## Promotion

@@ -114,10 +114,9 @@ In `when:` and `transform.body:` (JS sandbox-mode):
 
 ## 5. Validate before you write
 
-The protocol package exposes `validateRoutineSpec` which runs Ajv + cross-ref checks (missing step ids in `when:`, missing layout edges, etc).
+From the repository root, use the protocol package's `validateRoutineSpec` to run Ajv + cross-ref checks (missing step ids in `when:`, missing layout edges, etc).
 
 ```bash
-cd /c/Users/bryan/enclave/npi-deck
 bun -e '
   import("yaml").then(y =>
     import("./packages/protocol/dist/index.js").then(p => {

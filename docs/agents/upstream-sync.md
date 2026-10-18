@@ -67,10 +67,10 @@ dependencies; never execute unaudited installers.
 
 ## 4. Commit and verify in isolation
 
-Complete the merge with a signed commit and verify it:
+Complete the merge using the configured agent signing key and verify it:
 
 ```sh
-git commit -S/home/shayna/.ssh/id_ed25519_github_signing_agents.pub -F <message-file>
+git commit -S -F <message-file>
 git verify-commit HEAD
 ```
 
@@ -88,9 +88,9 @@ bun --cwd apps/web run build
 
 Run focused verification for conflicted boundaries and exercise changed runtime
 behavior using a separate service instance/port and temporary state. Follow
-`docs/install.md` for isolated setup; do not touch `~/.npi-deck`, the live
-snapshot `~/.local/share/npi-deck`, or the live `npi-deck.service`. Never stop,
-restart, reload, or reprovision that service. Do not mutate the live desktop,
+`docs/install.md` for isolated setup; leave the live state directory, installed
+snapshot, and `npi-deck.service` untouched. Never stop, restart, reload, or
+reprovision that service. Do not mutate the live desktop,
 windows, workspaces, tmux, desktop entries, or XDG configuration. All GUI,
 Electron, browser, and auto-open verification must use `xvfb-run -a <cmd>` with
 a timeout, never display `:0` or Xephyr. Terminate the entire process tree,

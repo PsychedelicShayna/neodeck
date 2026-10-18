@@ -9,14 +9,14 @@ the Captain's answer.
 
 Workspace policy governs branches, worktrees, signed commits, pull requests,
 merging, labels, and GitHub posting. Repository-specific values are in
-`docs/policy/README.md`; nothing here adds a confirmation step.
+`docs/policy/README.md`; review and policy-approval gates are defined below.
 
 - Default branch: `main`; integration: `nightly`.
 - Create topic branches in `../neodeck-wt-<slug>` from freshly fetched `origin/nightly`; PRs target `nightly`. `hotfix/` PRs target `main`, followed by a PR merging `main` back into `nightly`.
 - Merge commits only: `Merge PR #<number>: <conventional PR subject> (@<author>)`.
 - PR bodies use `.github/PULL_REQUEST_TEMPLATE.md` and the workspace NOTE identity block.
 - Contributor PRs are read-only on the owner's machine; see `docs/agents/pr-review-bots.md` › Running PR code.
-- Review bots are advisory, requested at the authoring agent's discretion; see `docs/agents/pr-review-bots.md` before requesting or handling a round.
+- Before any review request, finding disposition, or merge, read `docs/agents/pr-review-bots.md`: every PR needs current-head review and every existing finding needs an in-thread disposition. Its dated fix-forward exception is separate from the general gate.
 - Weekly nightly-to-main promotion and release tags are documented in `docs/policy/README.md`.
 
 ## Fork maintenance
@@ -25,9 +25,9 @@ Before adding fork behavior or integrating upstream, read
 `docs/agents/fork-maintenance.md` for placement and compatibility rules.
 Before synchronizing a release, follow `docs/agents/upstream-sync.md`.
 Repository slug changes do not rename package scopes, environment variables,
-installed paths, launchers, or services. The installed snapshot remains
-`~/.local/share/npi-deck`, served by `npi-deck.service`; keep the live service
-and display untouched during verification.
+installed paths, launchers, or services. See `docs/install.md` for the installed
+snapshot served by `npi-deck.service`; keep the live service and display
+untouched during verification.
 
 ## Agent skills
 
