@@ -70,7 +70,7 @@ workspace policy is not a substitute for disposing of its review thread.
 
 ## Captain-authorized 2026-10-18 fix-forward exception
 
-This exception applies only to the review-policy repair PR, the fix-forward
+This exception applies only to review-policy repair PR #189, the fix-forward
 work for merged PRs #152, #156, #180, #141, #153, #154, and #155, and the
 completion of open PRs #186, #164, #165, #184, and #188. It is not the general
 gate and does not carry forward to unrelated work.
