@@ -1,8 +1,9 @@
 # Repository policy
 
-The workspace policy governs branches, commits, signing, pull requests, merging,
-labels, and GitHub posting. This file holds the repository-specific values;
-the review procedure includes the policy repair's head-specific Captain approval.
+Follow the GitHub-tree `AGENTS.md` one directory above this repository (in the
+directory containing it) for branches, commits, signing, pull requests, and
+merging. This file holds repository-specific values; it adds no policy-file
+approval gate.
 
 ## Branches
 
@@ -19,7 +20,7 @@ the review procedure includes the policy repair's head-specific Captain approval
 ## Merging
 
 - Merge commits only (`gh pr merge --merge`). Subject: `Merge PR #<number>: <conventional PR subject> (@<author>)`.
-- The authoring agent merges its own PR into `nightly` only after workspace gates and the current-head review gate in `docs/agents/pr-review-bots.md` pass, unless the assignment reserves merging to another agent or the Captain. Read every existing round and dispose of every finding in-thread. The dated fix-forward exception and the policy repair's SHA-naming Captain approval are defined in that procedure.
+- The authoring agent merges its own PR into `nightly` once the GitHub-tree policy gates and the final-head Code Review gate in `docs/agents/pr-review-bots.md` pass, unless the assignment reserves merging to another agent or the Captain. Read every existing round and answer every finding in-thread. Do not request security rounds; fix or disprove security findings already posted.
 - Contributor heads (any author other than the owner) are never executed on the owner's machine; see `docs/agents/pr-review-bots.md` › Running PR code.
 
 ## Promotion

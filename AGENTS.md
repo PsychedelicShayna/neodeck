@@ -7,16 +7,16 @@ the Captain's answer.
 
 ## Workspace policy comes first
 
-Workspace policy governs branches, worktrees, signed commits, pull requests,
-merging, labels, and GitHub posting. Repository-specific values are in
-`docs/policy/README.md`; review and policy-approval gates are defined below.
+Follow the GitHub-tree `AGENTS.md` one directory above this repository (in the
+directory containing it) for branches, commits, signing, pull requests, and
+merging. Repository-specific values are in `docs/policy/README.md`.
 
 - Default branch: `main`; integration: `nightly`.
 - Create topic branches in `../neodeck-wt-<slug>` from freshly fetched `origin/nightly`; PRs target `nightly`. `hotfix/` PRs target `main`, followed by a PR merging `main` back into `nightly`.
 - Merge commits only: `Merge PR #<number>: <conventional PR subject> (@<author>)`.
 - PR bodies use `.github/PULL_REQUEST_TEMPLATE.md` and the workspace NOTE identity block.
 - Contributor PRs are read-only on the owner's machine; see `docs/agents/pr-review-bots.md` › Running PR code.
-- Before any review request, finding disposition, or merge, read `docs/agents/pr-review-bots.md`: every PR needs current-head review and every existing finding needs an in-thread disposition. Its dated fix-forward exception is separate from the general gate.
+- Before any review request, finding disposition, or merge, read `docs/agents/pr-review-bots.md`: every PR needs a complete, clean Code Review on its final head and every finding needs an in-thread disposition. Do not request security rounds; fix or disprove security findings already posted.
 - Weekly nightly-to-main promotion and release tags are documented in `docs/policy/README.md`.
 
 ## Fork maintenance
