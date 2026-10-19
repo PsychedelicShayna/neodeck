@@ -92,9 +92,11 @@ Other env knobs: `NPI_DECK_PORT`, `NPI_DECK_HOST`, `NPI_DECK_DB_PATH`, `NPI_DECK
 ## Releases
 
 The existing CI workflow publishes a **stable GitHub release on each push to
-`main`**, and a **new prerelease on each push to `nightly`**, after the Ubuntu
-typecheck, tests and web build succeed. Other matrix platforms continue
-independently; a PR never publishes. Tags derive from the root package version:
+`main`** after the Ubuntu typecheck, tests and web build succeed. Each push to
+`nightly` publishes a **new prerelease after a successful Ubuntu web build and
+packaging**, with typecheck and test outcomes reported in the release notes
+rather than gating publication. Other matrix platforms continue independently;
+a PR never publishes. Tags derive from the root package version:
 stable uses `v<version>+build.<run_id>.<run_attempt>` (or appends `.build.…`
 when the version already has build metadata), while nightly uses
 `v<version-without-build-metadata>-nightly.<shortsha>.<run_id>.<run_attempt>`.
