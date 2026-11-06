@@ -7,7 +7,7 @@
  *
  * Deck-authored templates and native instances are live (`agentTemplates`,
  * `agentInstances`). NeoPi's own definitions (`.omp/agents/*.md`,
- * `WATCHDOG.yml`, Chronicler) can't be listed until NeoPi exposes
+ * `WATCHDOG.toml`, Chronicler) can't be listed until NeoPi exposes
  * `list_agent_definitions`, and nothing can start an instance from a template
  * until neopi#11 settles the flat agent model. Both stay behind the
  * `agentDefinitions` / `agentSpawn` preview domains; the contract is in
@@ -28,7 +28,7 @@ export function provenance(t: Pick<AgentTemplate, "source">): string {
 	switch (t.source.format) {
 		case "deck": return "Written in the deck";
 		case "agent-md": return `NeoPi agent file${scope}`;
-		case "watchdog-yaml": return `WATCHDOG.yml${scope}`;
+		case "watchdog-toml": return `WATCHDOG.toml${scope}`;
 		case "chronicler": return "Chronicler settings";
 		case "builtin": return "Built into NeoPi";
 	}
@@ -49,7 +49,7 @@ const NATIVE_PREVIEW: AgentTemplate[] = [
 	{ id: "native:task", name: "task", description: "Takes one assignment, works it, and returns a result to whoever started it.", source: { format: "agent-md", path: "~/.omp/agent/agents/task.md", scope: "bundled" }, preset: "returns a result", model: "@default", tools: ["read", "edit", "bash", "grep", "find"], instanceCount: 0 },
 	{ id: "native:scout", name: "scout", description: "Read-only investigation. Maps unfamiliar code and hands back compressed context.", source: { format: "agent-md", path: "~/.omp/agent/agents/scout.md", scope: "bundled" }, preset: "read-only", model: "@smol", tools: ["read", "grep", "find"], instanceCount: 0 },
 	{ id: "native:reviewer", name: "reviewer", description: "Reviews a patch for provable defects and returns a verdict.", source: { format: "agent-md", path: ".omp/agents/reviewer.md", scope: "project" }, preset: "read-only", model: "@slow", tools: ["read", "grep"], instanceCount: 0 },
-	{ id: "native:advisor-quality", name: "quality", description: "Watches every turn of the session it is attached to and speaks only through advise.", source: { format: "watchdog-yaml", path: "~/.omp/agent/WATCHDOG.yml", scope: "user" }, preset: "watches a session", model: "@default", tools: ["advise", "read"], instanceCount: 0 },
+	{ id: "native:advisor-quality", name: "quality", description: "Watches every turn of the session it is attached to and speaks only through advise.", source: { format: "watchdog-toml", path: "~/.omp/agent/WATCHDOG.toml", scope: "user" }, preset: "watches a session", model: "@default", tools: ["advise", "read"], instanceCount: 0 },
 	{ id: "native:chronicler", name: "Chronicler", description: "Records decisions and beats of a session as durable notes. One per session.", source: { format: "chronicler" }, preset: "one per session", model: "@smol", tools: ["write"], instanceCount: 0 },
 ];
 

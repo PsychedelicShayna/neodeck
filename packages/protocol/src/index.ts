@@ -177,7 +177,7 @@ export interface UpdateNotificationSettingsRequest {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NeoPi configuration registry (`~/.omp/agent/config.yml`)
+// NeoPi configuration registry (`~/.omp/agent/config.toml`)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type NpiConfigValueType = "boolean" | "string" | "number" | "enum" | "array" | "record";
@@ -203,14 +203,14 @@ export interface NpiConfigSetting {
 	/** Risk note from the registry (rate limits, bans). */
 	warning?: string;
 	defaultValue: unknown;
-	/** Value the editor starts from: the global config.yml value, else the default. */
+	/** Value the editor starts from: the global config.toml value, else the default. */
 	value: unknown;
 	/** Value NeoPi resolves for the deck's default workspace, environment included. */
 	effectiveValue: unknown;
 	provenance: NpiConfigProvenance;
-	/** The global config.yml sets this key; reset-to-default removes it. */
+	/** The global config.toml sets this key; reset-to-default removes it. */
 	inGlobalConfig: boolean;
-	/** config.yml holds a value the setting rejects; NeoPi ignores it and uses the default. */
+	/** config.toml holds a value the setting rejects; NeoPi ignores it and uses the default. */
 	invalidGlobalValue: boolean;
 	/** Credential: the value is write-only here. */
 	secret: boolean;
@@ -228,7 +228,7 @@ export interface NpiConfigSetting {
 	/** Entries may be path-scoped objects (`{ path(s), values }`) rather than plain strings. */
 	pathScoped?: boolean;
 	env?: { name: string; fallback: boolean; active: boolean };
-	/** Credential records: entry and field names config.yml holds (never their values). Edit them with `entries`. */
+	/** Credential records: entry and field names config.toml holds (never their values). Edit them with `entries`. */
 	secretEntries?: Array<{ key: string; fields: string[] }>;
 	/** Why this setting cannot be edited here; absent when editable. */
 	lockedReason?: string;
@@ -244,7 +244,7 @@ export interface NpiConfigTab {
 export interface NpiConfigResponse {
 	/** Workspace whose project layer the provenance reflects. */
 	cwd: string;
-	/** Global config file NeoPi reads and saves: the first existing of config.yml, config.yaml. */
+	/** Global config.toml NeoPi reads and saves; legacy YAML is import-only. */
 	configPath: string;
 	tabs: NpiConfigTab[];
 	settings: NpiConfigSetting[];
@@ -363,7 +363,7 @@ export interface SessionFallbackChainResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Custom providers and models (`~/.omp/agent/models.yml`)
+// Custom providers and models (`~/.omp/agent/models.toml`)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ModelsConfigModelSummary {
@@ -397,7 +397,7 @@ export interface ModelsConfigProviderSummary {
 }
 
 export interface ModelsConfigResponse {
-	/** File NeoPi reads: models.yml, or models.yaml when only that exists. */
+	/** Canonical models.toml; legacy YAML is import-only and is never edited. */
 	path: string;
 	exists: boolean;
 	/**
@@ -406,7 +406,7 @@ export interface ModelsConfigResponse {
 	 */
 	revision: string;
 	/**
-	 * The document with every credential replaced by a `<npi-deck-masked:…>` placeholder:
+	 * Native TOML with every credential replaced by a `<npi-deck-masked:…>` placeholder:
 	 * apiKey, every header and requestMetadata value, every baseUrl (provider, model, model
 	 * override) whatever its shape, values under credential-like keys and their other
 	 * occurrences. A placeholder saved as the whole value of an apiKey, header or requestMetadata
@@ -426,7 +426,7 @@ export interface ModelsConfigResponse {
 	providers: ModelsConfigProviderSummary[];
 }
 
-/** Validate (POST /models-config/validate) or save (PUT /models-config) a whole document. */
+/** Validate (POST /models-config/validate) or save (PUT /models-config) a whole native TOML document. */
 export interface ModelsConfigDocumentRequest {
 	raw: string;
 	/** Required for saves: the `revision` the edit started from. A mismatch is refused with 409. */
@@ -1629,7 +1629,7 @@ export interface Task {
 export interface CreateTaskRequest {
 	title: string;
 	body?: string;
-	/** Merged into leading YAML; body remains the sole card-property store. */
+	/** Merged into leading TOML; body remains the sole card-property store. */
 	properties?: Record<string, unknown>;
 	stateId?: string;
 	cwd?: string;
@@ -1788,7 +1788,7 @@ export interface InboxRouting {
  */
 export interface PromoteInboxItemRequest {
 	stateId?: string;
-	/** Project assignment; linked worktree and other properties remain leading YAML in the inbox body. */
+	/** Project assignment; linked worktree and other properties remain leading TOML in the inbox body. */
 	cwd?: string;
 	markProcessed?: boolean;
 	body?: string;
@@ -1822,13 +1822,13 @@ export interface Routine {
 	lastRunAt?: string;
 	nextRunAt?: string;
 	// V1 additions — see "V1 routine spec" section below for the parsed-spec types.
-	/** 0 = legacy single-action; 1 = YAML pipeline; 2 = native graph. */
+	/** 0 = legacy single-action; 1 = TOML pipeline; 2 = native graph. */
 	specVersion: 0 | 1 | 2;
 	/** Concurrency policy. V0 routines default to 'skip'; V1 routines set it explicitly in their spec. */
 	concurrency: RoutineConcurrency;
 	/** Full V1 spec source-of-truth. NULL/undefined for V0 routines. */
-	specYaml?: string;
-	/** Native V2 source of truth; never derived from or rendered into YAML. */
+	specToml?: string;
+	/** Native V2 source of truth; never derived from or rendered into TOML. */
 	graph?: RoutineGraph;
 	/** Optional runtime budget caps. */
 	budget?: RoutineBudget;
@@ -1843,9 +1843,9 @@ export type CreateRoutineRequest = {
 	description?: string;
 	enabled?: boolean;
 } & (
-	| { cron: string; actionKind: RoutineActionKind; actionBody: string; actionCwd?: string; specYaml?: string; graph?: never }
-	| { graph: RoutineGraph; cron?: never; actionKind?: never; actionBody?: never; actionCwd?: never; specYaml?: never }
-	| { specYaml: string; graph?: never; cron?: string; actionKind?: RoutineActionKind; actionBody?: string; actionCwd?: string }
+	| { cron: string; actionKind: RoutineActionKind; actionBody: string; actionCwd?: string; specToml?: string; graph?: never }
+	| { graph: RoutineGraph; cron?: never; actionKind?: never; actionBody?: never; actionCwd?: never; specToml?: never }
+	| { specToml: string; graph?: never; cron?: string; actionKind?: RoutineActionKind; actionBody?: string; actionCwd?: string }
 );
 
 export interface UpdateRoutineRequest {
@@ -1856,7 +1856,7 @@ export interface UpdateRoutineRequest {
 	actionBody?: string;
 	actionCwd?: string;
 	enabled?: boolean;
-	specYaml?: string;
+	specToml?: string;
 	graph?: RoutineGraph;
 }
 
@@ -2108,7 +2108,7 @@ export type RoutineTrigger =
 	/** Legacy generic admission does not subscribe, select or filter by these declarations. */
 	| { event: { source: string; type?: string; filter?: string } };
 
-/** The parsed V1 routine spec. Source-of-truth lives in routines.spec_yaml. */
+/** The parsed V1 routine spec. Source-of-truth lives in routines.spec_toml. */
 export interface RoutineSpec {
 	name: string;
 	description?: string;
@@ -2122,7 +2122,7 @@ export interface RoutineSpec {
 	steps: RoutineStep[];
 	/**
 	 * OPTIONAL canvas-mode metadata: per-step node positions plus the edge graph
-	 * between them. Carried inline in spec_yaml so canvas mode is fully
+	 * between them. Carried inline in spec_toml so canvas mode is fully
 	 * round-trippable without a separate persistence layer. The V1 runtime engine
 	 * ignores `layout` entirely; the visual builder uses it to restore the graph.
 	 */

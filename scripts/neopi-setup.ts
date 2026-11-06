@@ -21,7 +21,7 @@
  * Steps: worktree (idempotent) → Bun engine gate → frozen install (unless skipped) → gen:tool-views →
  * native addon (release stamp or legacy sentinel + fingerprint of its native inputs, platform, CPU variant and
  * file sha256, recorded in <tree>/node_modules/.npi-deck/native-addon.json) →
- * register in <home>/config.yml → tsconfig.neopi.json.
+ * register in <home>/config.toml → tsconfig.neopi.json.
  *
  * An addon is reused only when its recorded (or, for an unrecorded addon inside another
  * checkout, that checkout's) native-input fingerprint equals this tree's; a mismatch needs
@@ -46,7 +46,7 @@ import {
 import * as os from "node:os";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
-import { parseDocument, YAMLSeq, isMap, isSeq } from "yaml";
+import { registerBackend } from "../apps/server/src/backend/config.ts";
 import {
 	addonProvenance,
 	addonTarget,
@@ -359,24 +359,9 @@ function isDanglingLink(file: string): boolean {
 }
 
 // ---- 4. Register the backend ----------------------------------------------
-const configPath = path.join(npiHome, "config.yml");
-mkdirSync(npiHome, { recursive: true });
-const doc = parseDocument(existsSync(configPath) ? readFileSync(configPath, "utf8") : "");
-if (doc.errors.length > 0) die(`cannot parse ${configPath}: ${doc.errors[0]?.message}`);
-if (!isMap(doc.contents)) doc.contents = doc.createNode({}) as typeof doc.contents;
-let backends = doc.get("backends");
-if (!isSeq(backends)) {
-	backends = new YAMLSeq();
-	doc.set("backends", backends);
-}
-const entry = { id: shortSha, kind: "source", path: tree };
-const seq = backends as YAMLSeq;
-const existing = seq.items.findIndex(item => isMap(item) && item.get("id") === shortSha);
-if (existing === -1) seq.add(doc.createNode(entry));
-else seq.items[existing] = doc.createNode(entry);
-if (!doc.get("activeBackend")) doc.set("activeBackend", shortSha);
-await Bun.write(configPath, doc.toString());
-step(`registered backend ${shortSha} in ${configPath} (active: ${doc.get("activeBackend")})`);
+const configPath = path.join(npiHome, "config.toml");
+const registration = registerBackend(npiHome, { id: shortSha, kind: "source", path: tree });
+step(`registered backend ${shortSha} in ${configPath} (active: ${registration.activeBackend})`);
 
 // ---- 5. Typecheck config ---------------------------------------------------
 const tsconfigPath = path.join(DECK_ROOT, "tsconfig.neopi.json");

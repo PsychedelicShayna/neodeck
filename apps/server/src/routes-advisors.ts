@@ -19,7 +19,7 @@ type AdvisorSession = {
 	applyAdvisorConfigs(config: Discovered): void;
 };
 type AdvisorBridge = AgentBridge & { advisorSession(id: string): AdvisorSession | undefined; liveAdvisorSessions(): AdvisorSession[] };
-const WATCHDOG_NAMES = ["WATCHDOG.yml", "WATCHDOG.yaml"];
+const WATCHDOG_NAMES = ["WATCHDOG.toml"];
 const digest = (value: string | null) => createHash("sha256").update(value === null ? "missing\0" : `present\0${value}`).digest("hex");
 const errorText = (err: unknown) => err instanceof Error ? err.message : String(err);
 
@@ -40,8 +40,10 @@ function directories(cwd: string): { projectDir: string; agentDir: string } {
 }
 async function scopeDoc(api: AdvisorSdk, scope: "user" | "project", cwd: string) {
 	const file = await api.resolveAdvisorConfigEditPath(scope, directories(cwd));
+	if (path.basename(file) !== "WATCHDOG.toml") throw new Error("NeoPi backend does not expose native WATCHDOG.toml editing");
+	const doc = await api.loadWatchdogConfigFile(file);
 	const snapshot = await fileSnapshot(file);
-	return { file, hash: snapshot.hash, doc: await api.loadWatchdogConfigFile(file) };
+	return { file, hash: snapshot.hash, doc };
 }
 async function discovery(api: AdvisorSdk, cwd: string) {
 	const agentDir = sdk().getAgentDir();
@@ -60,7 +62,7 @@ async function discovery(api: AdvisorSdk, cwd: string) {
 // Serialize WATCHDOG compare-and-save, enabled toggles and session roster
 // selection across browser editors in this process, so each applies against
 // the roster the previous one wrote. The final re-read also catches external
-// edits; NeoPi owns YAML serialization.
+// edits; NeoPi owns comment-preserving TOML serialization.
 let saveQueue: Promise<void> = Promise.resolve();
 function serialize<T>(run: () => Promise<T>): Promise<T> {
 	const result = saveQueue.then(run);
@@ -86,6 +88,11 @@ function validDoc(value: unknown): value is Doc {
 
 export function buildAdvisorsRouter(bridge: AgentBridge, config: import("./config.ts").Config): Hono {
 	const app = new Hono();
+	app.use("*", async (c, next) => {
+		if (feature("npi-config").MAIN_CONFIG_FILENAMES[0] !== "config.toml")
+			return c.json({ error: "This NeoPi backend does not support native config.toml and WATCHDOG.toml. Upgrade the backend before editing advisors." }, 501);
+		await next();
+	});
 	const sessions = bridge as AdvisorBridge;
 	const cwdFor = async (cwd: string | undefined) => {
 		const saved = await bridge.listSessions({});
@@ -127,7 +134,7 @@ export function buildAdvisorsRouter(bridge: AgentBridge, config: import("./confi
 		} catch (err) { log.warn("save watchdog failed", err); return c.json({ error: errorText(err) }, 500); }
 	});
 
-	// Flip one advisor's `enabled:` in the WATCHDOG file its effective entry
+	// Flip one advisor's `enabled` in the WATCHDOG.toml file its effective entry
 	// comes from (discovery is last-wins by slug), editing the loaded document
 	// so NeoPi's patch-save keeps comments and every other field.
 	app.patch("/advisors/watchdog/enabled", async c => {
@@ -142,6 +149,8 @@ export function buildAdvisorsRouter(bridge: AgentBridge, config: import("./confi
 				const api = feature("advisors");
 				const slug = api.slugifyAdvisorName(name);
 				let source: { file: string; doc: Doc; index: number } | undefined;
+				// Discovery imports legacy siblings before enumerating canonical source paths.
+				await api.discoverAdvisorConfigs(cwd, sdk().getAgentDir());
 				for (const candidate of await api.collectConfigCandidates(cwd, sdk().getAgentDir(), WATCHDOG_NAMES)) {
 					const doc = await api.loadWatchdogConfigFile(candidate.path);
 					const index = doc.advisors.findLastIndex(advisor => api.slugifyAdvisorName(advisor.name) === slug);
@@ -174,6 +183,8 @@ export function buildAdvisorsRouter(bridge: AgentBridge, config: import("./confi
 				(body.evictStaleResults !== undefined && typeof body.evictStaleResults !== "boolean") ||
 				(body.model !== undefined && typeof body.model !== "string")) return c.json({ error: "invalid advisor settings" }, 400);
 			const api = feature("advisors");
+			// Reject malformed persisted settings before a writable load can move the file aside.
+			await sdk().Settings.loadReadOnly({ cwd, agentDir: sdk().getAgentDir() });
 			const settings = await sdk().Settings.loadIsolated({ cwd, agentDir: sdk().getAgentDir() });
 			if (body.enabled !== undefined) api.cfgAdvisorEnabled.set(settings, body.enabled);
 			if (body.syncBacklog !== undefined) api.cfgAdvisorSyncBacklog.set(settings, body.syncBacklog as "off" | "1" | "3" | "5");
@@ -183,11 +194,11 @@ export function buildAdvisorsRouter(bridge: AgentBridge, config: import("./confi
 			await settings.flush();
 			// Reload the persisted layer on each independent live settings instance.
 			// NeoPi fires its effective modelRoles change hook on reload, retargeting
-			// the live role without queuing a second write to config.yml.
+			// the live role without queuing a second write to config.toml.
 			await bridge.reloadLiveSettings();
 			await applyToSessions(sessions, feature("advisors"));
 			return c.json({ ok: true });
-		} catch (err) { log.warn("save advisor settings failed", err); return c.json({ error: errorText(err) }, 409); }
+		} catch { log.warn("save advisor settings failed (detail withheld)"); return c.json({ error: "NeoPi could not save advisor settings; diagnostic detail is withheld because it may contain credentials." }, 409); }
 	});
 
 	app.get("/sessions/:id/advisors", c => {

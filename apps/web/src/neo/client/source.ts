@@ -64,7 +64,7 @@ export const SOURCES: Readonly<Record<Domain, Source>> = {
 	agentTemplates: "live",
 	/** Native identities and permitted actions, without preview instances. */
 	agentInstances: "live",
-	/** NeoPi's own definitions (.omp/agents, WATCHDOG.yml, Chronicler): needs `list_agent_definitions`. */
+	/** NeoPi's own definitions (.omp/agents, WATCHDOG.toml, Chronicler): needs `list_agent_definitions`. */
 	agentDefinitions: "preview",
 	/** Starting an instance from a template: needs the neopi#11 flat agent model. */
 	agentSpawn: "preview",

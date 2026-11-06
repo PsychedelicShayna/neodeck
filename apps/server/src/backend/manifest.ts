@@ -190,7 +190,7 @@ export const MANIFEST = {
 			readRpcSubagentTranscript: op("@oh-my-pi/pi-coding-agent/modes/rpc/rpc-subagents", "readRpcSubagentTranscript"),
 		},
 	},
-	/** W11: WATCHDOG.yml editing, rediscovery and hot apply (`applyAdvisorConfigs` is a session method). */
+	/** W11: WATCHDOG.toml editing, rediscovery and hot apply (`applyAdvisorConfigs` is a session method). */
 	advisors: {
 		tier: "optional-feature",
 		consumers: ["W11"],

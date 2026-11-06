@@ -3,7 +3,7 @@ export interface AgentTemplate {
 	id: string;
 	name: string;
 	description?: string;
-	source: { format: "agent-md" | "watchdog-yaml" | "chronicler" | "builtin" | "deck"; path?: string; scope?: "user" | "project" | "bundled" };
+	source: { format: "agent-md" | "watchdog-toml" | "chronicler" | "builtin" | "deck"; path?: string; scope?: "user" | "project" | "bundled" };
 	/** Native selector, kept opaque. A model role is not a template. */
 	model?: string;
 	thinking?: string;

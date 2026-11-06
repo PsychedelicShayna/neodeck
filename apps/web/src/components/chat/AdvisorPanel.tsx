@@ -201,7 +201,7 @@ function AdvisorPicker({ sessionId, status, onApplied, onCancel }: {
 						<input type="checkbox" checked={chosen.has(a.name)} onChange={() => toggle(a.name)} />
 						<span className="font-medium text-ink">{a.name}</span>
 						<span className="font-mono text-2xs text-ink-3">{a.model ?? "advisor role model"}</span>
-						{a.enabled === false && <span className="chip bg-paper-3 text-ink-3" title="enabled: false in WATCHDOG; choosing it here still runs it in this chat">off in roster</span>}
+						{a.enabled === false && <span className="chip bg-paper-3 text-ink-3" title="enabled = false in WATCHDOG.toml; choosing it here still runs it in this chat">off in roster</span>}
 					</label>
 				</li>)}
 			</ul>}
