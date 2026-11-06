@@ -76,8 +76,8 @@ if (!fixtureRoot) {
   const chunks = [{ id: "fixture", object: "chat.completion.chunk", model: "card", choices: [{ index: 0, delta, finish_reason: null }] }, { id: "fixture", object: "chat.completion.chunk", model: "card", choices: [{ index: 0, delta: {}, finish_reason: tools.length ? "tool_calls" : "stop" }] }];
   return new Response(chunks.map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
  } });
- writeFileSync(path.join(agentDir, "models.yml"), `providers:\n  fixture:\n    baseUrl: http://127.0.0.1:${provider.port}/v1\n    api: openai-completions\n    apiKey: fixture-only\n    models:\n      - id: card\n        name: Card Fixture\n        reasoning: false\n        input: [text]\n        contextWindow: 32000\n        maxTokens: 1000\n`);
- writeFileSync(path.join(agentDir, "config.yml"), "extensions:\n  enabled: false\n");
+ writeFileSync(path.join(agentDir, "models.toml"), `[providers.fixture]\nbaseUrl = "http://127.0.0.1:${provider.port}/v1"\napi = "openai-completions"\napiKey = "fixture-only"\nmodels = [{ id = "card", name = "Card Fixture", reasoning = false, input = ["text"], contextWindow = 32000, maxTokens = 1000 }]\n`);
+ writeFileSync(path.join(agentDir, "config.toml"), "[extensions]\nenabled = false\n");
  await loadBackend(resolveBackendSelection()!);
  if (!sdk().getAgentDir().startsWith(fixtureRoot + path.sep)) throw new Error("refusing non-private fixture agent dir");
  openDb({ path: path.join(fixtureRoot, "deck.db") });

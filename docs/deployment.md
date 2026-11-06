@@ -7,7 +7,7 @@ interface without one of these.
 
 Every pattern here runs the deck the one supported way: a checkout with a
 backend tree prepared by `scripts/neopi-setup.ts` and registered in
-`~/.npi-deck/config.yml`, started by the `npi-deck` launcher. See
+`~/.npi-deck/config.toml`, started by the `npi-deck` launcher. See
 [install.md](./install.md). There is no npm package or container image.
 
 ## Patterns
@@ -107,6 +107,6 @@ bun scripts/neopi-setup.ts --source /path/to/neopi --native-dir /path/to/prebuil
 
 Then stop the launcher (Ctrl-C) and start `npi-deck` again; it rebuilds the
 web bundle when its sources changed. `neopi-setup` registers a new tree in
-`config.yml` but leaves `activeBackend` on the old one, so after a pin change
+`config.toml` but leaves `activeBackend` on the old one, so after a pin change
 select the new tree in **Settings → Backend**. See
 [upgrading.md](./upgrading.md) for per-version notes and rolling back.

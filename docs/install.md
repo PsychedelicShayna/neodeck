@@ -5,7 +5,7 @@ npi-deck is the web cockpit for NeoPi, a fork of
 
 There is one supported way to install and run it: a git checkout of the deck,
 a NeoPi source tree prepared by `scripts/neopi-setup.ts` and registered in
-`~/.npi-deck/config.yml`, and the `npi-deck` launcher. There is no npm
+`~/.npi-deck/config.toml`, and the `npi-deck` launcher. There is no npm
 package, Docker image, or Windows launcher, and the deck does not check for or
 install updates.
 
@@ -13,7 +13,7 @@ install updates.
 git clone https://github.com/PsychedelicShayna/neodeck.git
 cd neodeck
 bun install --frozen-lockfile --ignore-scripts
-# prepare the pinned NeoPi tree and register it in ~/.npi-deck/config.yml
+# prepare the pinned NeoPi tree and register it in ~/.npi-deck/config.toml
 bun scripts/neopi-setup.ts --source /path/to/neopi --native-dir /path/to/prebuilt-natives
 #   no prebuilt addon? replace --native-dir … with --build-native (cold Rust build)
 mkdir -p ~/.local/bin
@@ -43,7 +43,7 @@ An explicit `--source` or `--native-dir` still wins over the variable.
 
 - [Prerequisites](#prerequisites)
 - [NeoPi backend tree](#neopi-backend-tree)
-- [config.yml](#configyml)
+- [config.toml](#configtoml)
 - [The npi-deck launcher](#the-npi-deck-launcher)
 - [Sign in to a provider](#sign-in-to-a-provider)
 - [Verifying the install](#verifying-the-install)
@@ -134,8 +134,8 @@ The script:
    The record is local bookkeeping, not authentication. Anyone who can write
    the tree can write a record, so it catches stale and swapped addons, not
    forged ones.
-5. Registers the tree under `backends` in `~/.npi-deck/config.yml`, and sets
-   `activeBackend` if it isn't set yet (see [config.yml](#configyml)).
+5. Registers the tree under `backends` in `~/.npi-deck/config.toml`, and sets
+   `activeBackend` if it isn't set yet (see [config.toml](#configtoml)).
 6. For the pinned commit (or with `--tsconfig`), writes the gitignored
    `tsconfig.neopi.json`. The server and Telegram bridge extend it to resolve
    NeoPi sources and ambient asset declarations. Both use that tree's `tsgo`
@@ -148,25 +148,32 @@ check a tree against everything the deck uses:
 bun apps/server/src/backend/contract.ts   # isolated; no provider requests
 ```
 
-## config.yml
+## config.toml
 
-`~/.npi-deck/config.yml` lists the prepared backend trees and names the one the
-deck loads. `neopi-setup` writes it; you rarely edit it by hand:
+`~/.npi-deck/config.toml` lists the prepared backend trees and names the one the
+deck loads. `neopi-setup` and **Settings → Backend** edit TOML natively,
+preserving comments and unrelated settings:
 
-```yaml
-backends:
-  - id: d8c9c98b0f       # 10-character short commit; neopi-setup uses it as the id
-    kind: source
-    path: /home/you/.npi-deck/neopi/d8c9c98b0f3097a981d03a6e2d4b8bb6b028ef90
-activeBackend: d8c9c98b0f
+```toml
+activeBackend = "d8c9c98b0f"
+
+[[backends]]
+id = "d8c9c98b0f" # 10-character short commit; neopi-setup uses it as the id
+kind = "source"
+path = "/home/you/.npi-deck/neopi/d8c9c98b0f3097a981d03a6e2d4b8bb6b028ef90"
 ```
 
-- `kind: source` is the only kind the deck loads; `kind: gateway` is reserved
+If only a legacy `config.yml` or `config.yaml` exists, the first read imports it
+once into an adjacent TOML file with the same permissions and logs the paths.
+The YAML file is never rewritten or deleted. If both formats exist, TOML wins
+and a warning names the ignored legacy file.
+
+- `kind = "source"` is the only kind the deck loads; `kind = "gateway"` is reserved
   and cannot be selected.
 - `activeBackend` is set by the first `neopi-setup` run and changed by
   **Settings → Backend**. A later `neopi-setup` run registers its tree without
   switching to it.
-- `NPI_DECK_BACKEND` (a backend id from `config.yml`, or an absolute tree
+- `NPI_DECK_BACKEND` (a backend id from `config.toml`, or an absolute tree
   path) overrides `activeBackend` for the whole launch, including the source
   shown in Settings; remove it and restart the launcher to switch from the UI.
 
@@ -273,7 +280,7 @@ A quick smoke list:
 1. **Health endpoint**: `curl http://127.0.0.1:1701/api/health` returns `{"ok":true,...}`.
 2. **Web bundle**: opening <http://127.0.0.1:1701> shows the chat view (or
    the kanban — there's no auth, so any route works).
-3. **Backend**: Settings → Backend shows the tree from `config.yml` as active,
+3. **Backend**: Settings → Backend shows the tree from `config.toml` as active,
    matching `neopi.pin`.
 4. **First session**: click "+ new session" in the sidebar, send any prompt.
    You should see streaming text within a couple of seconds.
@@ -287,7 +294,7 @@ If any of those fail, see [troubleshooting](#troubleshooting) below.
 Deck state lives in `~/.npi-deck` (`NPI_DECK_HOME` overrides; it is read from
 the environment that starts the deck, not from the managed `.env` inside it):
 
-- **Backend trees and selection**: `neopi/<sha>/` and `config.yml`.
+- **Backend trees and selection**: `neopi/<sha>/` and `config.toml`.
 - **Kanban, routines, inbox**: `deck.db` (`NPI_DECK_DB_PATH` overrides), with
   pasted images under `uploads/`.
 - **Managed env file and audit log**: `.env` and `env-audit.log`.
@@ -312,7 +319,7 @@ Elsewhere:
 hot reload on :5173 (open the latter). It is for working on the deck, not for
 running it: nothing supervises that server, so Settings → Restart and the
 backend picker's switch do not work, and processes it spawns are not confined
-to a cgroup. It loads the same `config.yml` backend. See
+to a cgroup. It loads the same `config.toml` backend. See
 [CONTRIBUTING.md](../CONTRIBUTING.md) for running a dev deck beside your
 everyday one.
 

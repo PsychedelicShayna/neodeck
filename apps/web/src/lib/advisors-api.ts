@@ -46,7 +46,7 @@ export const advisorsApi = {
 	saveWatchdog: (cwd: string, scope: "user" | "project", hash: string, doc: WatchdogDoc) =>
 		request<{ saved: ScopeDocument; merged: AdvisorConfiguration["merged"] }>("/advisors/watchdog", "PUT", { cwd, scope, hash, doc }),
 	saveSettings: (cwd: string, settings: Partial<AdvisorConfiguration["settings"]>) => request<{ ok: true }>("/advisors/settings", "PATCH", { cwd, ...settings }),
-	/** Write `enabled:` for one advisor into the WATCHDOG file its effective entry comes from. */
+	/** Write `enabled` for one advisor into its canonical WATCHDOG.toml source. */
 	setRosterEnabled: (cwd: string, name: string, enabled: boolean) =>
 		request<{ file: string; merged: AdvisorConfiguration["merged"] }>("/advisors/watchdog/enabled", "PATCH", { cwd, name, enabled }),
 	status: (id: string) => request<LiveAdvisorStatus>(`/sessions/${encodeURIComponent(id)}/advisors`),

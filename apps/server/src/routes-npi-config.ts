@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { Hono } from "hono";
 import type { Settings } from "@oh-my-pi/pi-coding-agent";
@@ -24,9 +23,9 @@ import { logger } from "./log.ts";
 const log = logger("routes:npi-config");
 const OTHER_TAB = "other";
 const errorText = (err: unknown) => err instanceof Error ? err.message : String(err);
-// NeoPi's loader embeds parser errors, which quote the offending config.yml
-// line (possibly a credential). Clients get this; the log keeps the detail.
-const LOAD_FAILED = "NeoPi could not load or save its settings; the deck server log has the details.";
+// Parser errors may quote credentials. Neither clients nor logs receive them.
+const LOAD_FAILED = "NeoPi could not load or save its settings.";
+const UNSUPPORTED = "This NeoPi backend does not support native config.toml. Upgrade the backend before editing settings.";
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 /** Record order is precedence in NeoPi, so equality is order-sensitive. */
@@ -46,7 +45,7 @@ function lookup(id: string): AnySetting | undefined {
 	return feature("npi-config").allSettings().find(setting => setting.id === id);
 }
 
-/** The key's value in one raw settings layer; a YAML `null` is NeoPi's unset tombstone. */
+/** The key's value in one raw settings layer; absent keys are unset. */
 function layerValue(layer: RawLayer, segments: readonly string[]): unknown {
 	let node: unknown = layer;
 	for (const key of segments) {
@@ -62,11 +61,10 @@ function envLock(setting: AnySetting): string | undefined {
 	return `$${setting.envName} overrides this setting while it is set. Remove it from the deck's Env settings or the launching environment to edit it here.`;
 }
 
-/** The global file NeoPi reads and saves: the first existing of its main config names (config.yml, then config.yaml). */
+/** Native settings always write config.toml; legacy YAML is import-only. */
 function globalConfigFile(): string {
-	const agentDir = sdk().getAgentDir();
-	const files = feature("npi-config").MAIN_CONFIG_FILENAMES.map(name => path.join(agentDir, name));
-	return files.find(file => existsSync(file)) ?? files[0]!;
+	if (feature("npi-config").MAIN_CONFIG_FILENAMES[0] !== "config.toml") throw new RequestError(UNSUPPORTED, 501);
+	return path.join(sdk().getAgentDir(), "config.toml");
 }
 
 function describe(setting: AnySetting, settings: Settings, globalLayer: RawLayer): NpiConfigSetting {
@@ -146,7 +144,7 @@ function tabsFor(settings: readonly NpiConfigSetting[]): NpiConfigTab[] {
  * enums check membership); string settings are JSON-quoted first so the exact
  * text survives the parser's trim. Typed JSON values reach `set`, which
  * normalizes them and runs the setting's validate and type checks. `entries`
- * edits single keys of the record in config.yml, so a write-only credential
+ * edits single keys of the record in config.toml, so a write-only credential
  * record is edited without resending what the browser never sees: null deletes
  * an entry, an object merges its fields into the existing entry (a null field
  * deletes that field), and any other value replaces the entry.
@@ -182,7 +180,7 @@ function requestShapeError(body: NpiConfigPatchRequest | null): string | undefin
 	return undefined;
 }
 
-// One config.yml write at a time from this process; NeoPi's flush merges
+// One config.toml write at a time from this process; NeoPi's flush merges
 // against the file on disk, so edits from the TUI in between are kept.
 let saveQueue: Promise<void> = Promise.resolve();
 function serializeSave<T>(run: () => Promise<T>): Promise<T> {
@@ -192,7 +190,7 @@ function serializeSave<T>(run: () => Promise<T>): Promise<T> {
 }
 
 class RequestError extends Error {
-	constructor(message: string, readonly status: 400 | 404 | 409) {
+	constructor(message: string, readonly status: 400 | 404 | 409 | 501) {
 		super(message);
 	}
 }
@@ -265,7 +263,10 @@ function modelRoles(settings: Settings, registry: Registry): Pick<NpiModelRolesR
 
 export function buildNpiConfigRouter(bridge: AgentBridge, config: Config): Hono {
 	const app = new Hono();
-	const load = (cwd = config.defaultCwd) => sdk().Settings.loadReadOnly({ cwd, agentDir: sdk().getAgentDir() });
+	const load = (cwd = config.defaultCwd) => {
+		globalConfigFile(); // Refuse old YAML-writing SDKs before loading or importing anything.
+		return sdk().Settings.loadReadOnly({ cwd, agentDir: sdk().getAgentDir() });
+	};
 
 	app.get("/npi-config", async c => {
 		try {
@@ -280,7 +281,8 @@ export function buildNpiConfigRouter(bridge: AgentBridge, config: Config): Hono 
 			};
 			return c.json(body);
 		} catch (err) {
-			log.warn("read NeoPi config failed", err);
+			if (err instanceof RequestError) return c.json({ error: err.message }, err.status);
+			log.warn("read NeoPi config failed (detail withheld)");
 			return c.json({ error: LOAD_FAILED }, 500);
 		}
 	});
@@ -302,7 +304,8 @@ export function buildNpiConfigRouter(bridge: AgentBridge, config: Config): Hono 
 			};
 			return c.json(body);
 		} catch (err) {
-			log.warn("read NeoPi model roles failed", err);
+			if (err instanceof RequestError) return c.json({ error: err.message }, err.status);
+			log.warn("read NeoPi model roles failed (detail withheld)");
 			return c.json({ error: LOAD_FAILED }, 500);
 		}
 	});
@@ -315,12 +318,13 @@ export function buildNpiConfigRouter(bridge: AgentBridge, config: Config): Hono 
 		if (shapeError) return c.json({ error: shapeError }, 400);
 		try {
 			return c.json(await serializeSave(async (): Promise<NpiConfigPatchResponse> => {
+				globalConfigFile(); // Gate before accessing settings on an older backend.
 				const setting = lookup(body.id);
 				if (!setting) throw new RequestError(`Unknown setting: ${body.id}`, 404);
 				const locked = envLock(setting);
 				if (locked) throw new RequestError(locked, 409);
 				if (body.entries !== undefined && setting.type !== "record") throw new RequestError(`${setting.id} is not a record; send value instead of entries`, 400);
-				// A writable load moves a malformed config.yml aside; a read-only load
+				// A writable load moves malformed config.toml aside; a read-only load
 				// fails first instead, leaving the user's file where it is.
 				await load();
 				const settings = await sdk().Settings.loadIsolated({ cwd: config.defaultCwd, agentDir: sdk().getAgentDir() });
@@ -361,7 +365,7 @@ export function buildNpiConfigRouter(bridge: AgentBridge, config: Config): Hono 
 			}));
 		} catch (err) {
 			if (err instanceof RequestError) return c.json({ error: err.message }, err.status);
-			log.warn(`save NeoPi setting ${body.id} failed`, err);
+			log.warn("save NeoPi setting failed (detail withheld)");
 			return c.json({ error: LOAD_FAILED }, 500);
 		}
 	});

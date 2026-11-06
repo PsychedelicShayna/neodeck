@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, realpathSync, copyFileSync, writeFi
 import * as path from "node:path";
 import { spawnOwned, spawnOwnedSync, terminateOwned } from "./owned-process.ts";
 import type { CardRunOwnership } from "./db/card-runs.ts";
+import { readTomlConfigSync } from "./settings-toml.ts";
 
 export async function cardGit(cwd: string, args: string[], signal?: AbortSignal): Promise<string> {
 	if (signal?.aborted) throw new Error("cancelled");
@@ -32,7 +33,7 @@ export async function validateLinkedWorktree(linked: string, signal?: AbortSigna
 	throw new Error("linked worktree is not registered with git");
 }
 
-/** Ownership is server-written and never inferred from public run.cwd or YAML. */
+/** Ownership is server-written and never inferred from public run.cwd or metadata. */
 export async function cleanupCardWorkspace(ownership: CardRunOwnership): Promise<void> {
 	if (ownership.ownedWorktreePath && ownership.repository) {
 		const result = spawnOwnedSync(["git", "worktree", "remove", "--force", ownership.ownedWorktreePath], {
@@ -50,13 +51,18 @@ export async function cleanupCardWorkspace(ownership: CardRunOwnership): Promise
 export function snapshotCardAgentState(source: string, target: string): void {
 	mkdirSync(target, { recursive: true, mode: 0o700 });
 	if (!existsSync(source)) return;
+	for (const name of ["config", "models"]) {
+		readTomlConfigSync(path.join(source, `${name}.toml`), {
+			legacyPaths: [path.join(source, `${name}.yml`), path.join(source, `${name}.yaml`)],
+		});
+	}
 	for (const entry of readdirSync(source, { withFileTypes: true })) {
 		if (!entry.isFile()) continue;
 		if (entry.name.endsWith(".db")) {
 			const db = new Database(path.join(source, entry.name), { readonly: true });
 			try { writeFileSync(path.join(target, entry.name), db.serialize(), { mode: 0o600 }); }
 			finally { db.close(); }
-		} else if (["config.yml", "models.yml"].includes(entry.name)) copyFileSync(path.join(source, entry.name), path.join(target, entry.name));
+		} else if (["config.toml", "models.toml"].includes(entry.name)) copyFileSync(path.join(source, entry.name), path.join(target, entry.name));
 	}
 }
 

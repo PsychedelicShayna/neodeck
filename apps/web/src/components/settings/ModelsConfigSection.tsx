@@ -16,7 +16,7 @@ type Check =
 const VALIDATE_DELAY_MS = 500;
 
 /**
- * models.yml: custom providers, models, overrides and discovery. The structured
+ * models.toml: custom providers, models, overrides and discovery. The structured
  * view is what NeoPi loads from disk; the editor holds the whole document with
  * credentials masked, validated by NeoPi as you type and again on save.
  */
@@ -87,7 +87,7 @@ export function ModelsConfigSection() {
 				<div>
 					<h1 className="text-xl font-semibold tracking-tight">Models &amp; providers</h1>
 					<p className="mt-1 max-w-3xl text-sm text-ink-3">
-						Custom providers, models, model overrides and discovery from NeoPi's models.yml. Edits are checked
+						Custom providers, models, model overrides and discovery from NeoPi's models.toml. Edits are checked
 						with NeoPi's own schema and provider rules before anything is written; saving keeps a backup of the
 						previous file and refreshes the model picker without a restart.
 					</p>
@@ -113,7 +113,7 @@ export function ModelsConfigSection() {
 					<ProvidersView providers={data.providers} exists={data.exists} invalid={data.error !== undefined} />
 					<div className="overflow-hidden rounded-md border border-line bg-paper">
 						<div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-paper-2 px-3 py-2">
-							<div className="meta">models.yml</div>
+							<div className="meta">models.toml</div>
 							<CheckStatus check={check} dirty={dirty} />
 						</div>
 						<div className="space-y-2 p-3">
@@ -131,7 +131,7 @@ export function ModelsConfigSection() {
 								it is. Delete one to remove it; a comment you write, or write in place of one, is saved as typed.
 							</p>
 							<textarea
-								aria-label="models.yml document"
+								aria-label="models.toml document"
 								value={text}
 								spellCheck={false}
 								disabled={saving}
@@ -140,7 +140,7 @@ export function ModelsConfigSection() {
 								onKeyDown={e => {
 									if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); if (canSave) void save(); }
 								}}
-								placeholder={"providers:\n  my-provider:\n    baseUrl: https://…/v1\n    api: openai-completions\n    apiKey: MY_PROVIDER_API_KEY\n    models:\n      - id: my-model"}
+								placeholder={'[providers.my-provider]\nbaseUrl = "https://…/v1"\napi = "openai-completions"\napiKey = "MY_PROVIDER_API_KEY"\n\n[[providers.my-provider.models]]\nid = "my-model"'}
 								className="field w-full resize-y px-2 py-1.5 font-mono text-xs leading-5"
 							/>
 							{check.state === "invalid" ? <Alert tone="danger">{check.error}</Alert> : null}
@@ -206,7 +206,7 @@ function ProvidersView({ providers, exists, invalid }: { providers: ModelsConfig
 	if (providers.length === 0) {
 		return (
 			<div className="rounded-md border border-dashed border-line bg-paper-2 px-3 py-3 text-sm text-ink-3">
-				{exists ? "models.yml defines no providers." : "No models.yml yet. Write one below to add custom providers and models."}
+				{exists ? "models.toml defines no providers." : "No models.toml yet. Write one below to add custom providers and models."}
 			</div>
 		);
 	}
