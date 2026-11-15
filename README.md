@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> **NPI deck now lives in NeoPi.** On 2026-10-23 this repository was folded into [PsychedelicShayna/neopi](https://github.com/PsychedelicShayna/neopi) as the [`deck/`](https://github.com/PsychedelicShayna/neopi/tree/nightly/deck) subtree ([neopi#567](https://github.com/PsychedelicShayna/neopi/pull/567)). Development, issues and releases continue there; file deck issues in [NeoPi's tracker](https://github.com/PsychedelicShayna/neopi/issues) with the `npi-deck` label. This repository is archived. Its `nightly` branch (`de5dbf46`) is the exact code that was folded in, and `main` is an older snapshot. The install steps below describe the pre-fold standalone setup and no longer apply.
+
 # NPI deck
 
 **A calmer place to drive your coding agent.**
